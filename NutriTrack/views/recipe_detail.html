@@ -1,0 +1,43 @@
+<nav aria-label="breadcrumb">
+    <ul>
+        <li><a href="/">トップ</a></li>
+        <li>レシピ詳細</li>
+    </ul>
+</nav>
+
+<header>
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h1>{{.Recipe.Title}}</h1>
+        {{if .IsOwner}}
+        <a href="/recipe/{{.Recipe.ID}}/edit" role="button" class="secondary">編集する</a>
+        {{end}}
+    </div>
+    <p>{{.Recipe.Description}}</p>
+</header>
+
+<div class="grid">
+    <div>
+        <article>
+            <header><strong>材料</strong></header>
+            <table class="striped">
+                <tbody>
+                    {{range .Recipe.Ingredients}}
+                    <tr>
+                        <td>{{if .GroupName}}<small>[{{.GroupName}}]</small> {{end}}{{.Name}}</td>
+                        <td style="text-align: right;">{{.Quantity}} g/ml</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </article>
+    </div>
+    <div>
+        <article>
+            <header><strong>作り方</strong></header>
+            {{range .Recipe.Steps}}
+            <p><strong>{{.StepNumber}}.</strong> {{.Instruction}}</p>
+            <hr>
+            {{end}}
+        </article>
+    </div>
+</div>

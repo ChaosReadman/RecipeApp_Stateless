@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <!-- 自前のCSSを読み込む -->
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .ingredient-drawer {
+            position: fixed;
+            right: 20px;
+            top: 100px;
+            width: 280px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            border: 1px solid #ccc;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            /* リサイズ機能を有効化 */
+            resize: both;
+            overflow: hidden; /* resizeを有効にするために必要 */
+            min-width: 200px;
+            min-height: 200px;
+        }
+        /* サイズ変更用の「耳（ハンドル）」を視覚的に表現 */
+        .ingredient-drawer::after {
+            content: "";
+            position: absolute;
+            right: 2px;
+            bottom: 2px;
+            width: 12px;
+            height: 12px;
+            cursor: nwse-resize;
+            background: linear-gradient(135deg, transparent 50%, #888 50%, #888 60%, transparent 60%, transparent 70%, #888 70%);
+            pointer-events: none; /* 本体のresize機能の邪魔をしない */
+        }
+
+        /* よく使う材料モーダル用 */
+        #common-ingredients-modal article {
+            max-width: 400px;
+        }
+        .common-ing-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .common-ing-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .ingredient-drawer-header {
+            cursor: grab;
+            background-color: #f4f4f4;
+            border-bottom: 1px solid #ddd;
+            padding: 5px;
+            border-radius: 8px 8px 0 0;
+            text-align: center;
+            color: #888;
+        }
+        .ingredient-drawer .list-container {
+            overflow-y: auto;
+            flex: 1;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="container">
+        <ul>
+            <li><a href="/" class="contrast"><strong>NutrientDB</strong></a></li>
+        </ul>
+        <ul>
+            {{if .User}}
+            <li>こんにちは、<strong>{{.User}}</strong> さん</li>
+            <li><a href="/logout" class="outline">ログアウト</a></li>
+            {{else}}
+            <li><a href="/login">ログイン</a></li>
+            {{end}}
+        </ul>
+    </nav>
+
+    {{if not .HideIngredientDrawer}}
+    <div class="ingredient-drawer" id="ingredient-drawer">
+        <div class="ingredient-drawer-header">
+            <span style="letter-spacing: 3px;">⠿⠿⠿</span>
+            <div style="font-size: 0.6rem; margin-top: -5px;">DRAG TO MOVE</div>
+        </div>
+
+        <!-- 検索フォームを追加 -->
+        <div style="padding: 10px; border-bottom: 1px solid #eee; background-color: #fff;">
+            <form action="/" method="GET" style="margin:0; display: flex; gap: 5px;">
+                <input type="text" name="q" placeholder="材料を検索..." value="{{.Query}}" style="font-size: 0.8rem; margin:0; height: auto; padding: 4px 8px;">
+                <button type="submit" style="width: auto; padding: 0 10px; font-size: 0.8rem; margin:0;">検索</button>
+            </form>
+            <!-- よく使う材料ボタンを追加 -->
+            <button type="button" class="outline secondary" 
+                style="width: 100%; margin-top: 5px; font-size: 0.7rem; padding: 2px;"
+                onclick="document.getElementById('common-ingredients-modal').showModal()">
+                ★ よく使う材料から選ぶ
+            </button>
+        </div>
+
+        <div class="list-container">
+            <!-- 検索結果を表示 -->
+            {{if .Foods}}
+            <div style="background-color: #f0faff; padding: 10px; border-bottom: 2px solid #1095c1;">
+                <small><strong>検索結果</strong></small>
+                <div style="margin-top: 5px;">
+                    {{range .Foods}}
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 5px;">
+                        <small><a href="/food/{{.ID}}">{{.Name}}</a></small>
+                        <form action="/ingredients/add" method="POST" style="margin:0;">
+                            <input type="hidden" name="id" value="{{.ID}}">
+                            <input type="hidden" name="name" value="{{.Name}}">
+                            <button type="submit" class="secondary" style="padding: 0 5px; font-size: 0.6rem;">追加</button>
+                        </form>
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+
+            <div style="padding: 10px;" id="selected-ingredients-list">
+            <small><strong>選択中の材料</strong></small>
+            {{if .Ingredients}}
+            {{range .Ingredients}}
+            <div class="ingredient-item">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <small><strong>{{.Name}}</strong></small>
+                    <form action="/ingredients/remove/{{.ID}}" method="POST" style="margin:0;">
+                        <button type="submit" class="outline" style="padding: 0 4px; font-size: 0.6rem; border-color: red; color: red;">×</button>
+                    </form>
+                </div>
+                <input type="hidden" name="ingredient_ids" value="{{.ID}}" form="recipe-form">
+                <div style="display: flex; gap: 5px;">
+                    <input type="number" step="0.1" name="qty_{{.ID}}" placeholder="分量" value="{{if .Quantity}}{{.Quantity}}{{end}}" form="recipe-form">
+                    <input type="text" name="grp_{{.ID}}" placeholder="グループ" value="{{.GroupName}}" form="recipe-form" title="グループ" list="group-list">
+                </div>
+            </div>
+            {{end}}
+            {{else}}
+            <p style="font-size: 0.7rem; color: #999; margin-top: 5px;">材料が追加されていません。</p>
+            {{end}}
+            </div>
+        </div>
+        {{if and .User (not .IsRecipePage)}}
+        <a href="/recipe/new" role="button" class="contrast" style="width: 100%; font-size: 0.8rem;">レシピを作成</a>
+        {{end}}
+    </div>
+    {{end}}
+
+    <!-- よく使う材料リストのモーダル -->
+    <dialog id="common-ingredients-modal">
+        <article>
+            <header>
+                <a href="#close" aria-label="Close" class="close" onclick="this.closest('dialog').close()"></a>
+                よく使う材料
+            </header>
+            <div class="common-ing-list">
+                {{range .MyIngredients}}
+                <div class="common-ing-item">
+                    <span>{{.Name}}</span>
+                    <button type="button" class="secondary" style="padding: 2px 10px; font-size: 0.7rem;" 
+                        onclick="addIngredientAsync('{{.ID}}', '{{.Name}}')">追加</button>
+                </div>
+                {{else}}
+                <p>履歴がありません。</p>
+                {{end}}
+            </div>
+            <footer>
+                <button class="secondary" onclick="document.getElementById('common-ingredients-modal').close()">閉じる</button>
+            </footer>
+        </article>
+    </dialog>
+
+    <script>
+        function checkDuplicate(id) {
+            const existing = document.querySelector(`.ingredient-item input[value="${id}"]`);
+            if (existing) {
+                alert("この材料は既に追加されています。");
+                return false;
+            }
+            return true;
+        }
+
+        // 非同期で材料を追加する関数
+        async function addIngredientAsync(id, name) {
+            if (!checkDuplicate(id)) return;
+
+            const params = new URLSearchParams();
+            params.append('id', id);
+            params.append('name', name);
+
+            try {
+                const response = await fetch('/ingredients/add', {
+                    method: 'POST',
+                    body: params,
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                });
+
+                if (response.ok) {
+                    // 背景の材料リスト（Drawer）を動的に更新
+                    const list = document.getElementById('selected-ingredients-list');
+                    
+                    // 「材料が追加されていません」のメッセージがあれば消す
+                    const emptyMsg = list.querySelector('p');
+                    if (emptyMsg) emptyMsg.remove();
+
+                    const newItem = document.createElement('div');
+                    newItem.className = 'ingredient-item';
+                    newItem.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                            <small><strong>${name}</strong></small>
+                            <form action="/ingredients/remove/${id}" method="POST" style="margin:0;">
+                                <button type="submit" class="outline" style="padding: 0 4px; font-size: 0.6rem; border-color: red; color: red;">×</button>
+                            </form>
+                        </div>
+                        <input type="hidden" name="ingredient_ids" value="${id}" form="recipe-form">
+                        <div style="display: flex; gap: 5px;">
+                            <input type="number" step="0.1" name="qty_${id}" placeholder="分量" form="recipe-form">
+                            <input type="text" name="grp_${id}" placeholder="グループ" form="recipe-form" title="グループ" list="group-list">
+                        </div>
+                    `;
+                    list.appendChild(newItem);
+                }
+            } catch (err) {
+                console.error("追加に失敗しました:", err);
+            }
+        }
+    </script>
+
+    <main class="container">
+        {{embed}} <!-- Djangoの {% block %} に近い役割です -->
+    </main>
+    <!-- 必要に応じてJSを読み込む -->
+    <script src="/static/js/app.js"></script>
+    <script>
+        const drawer = document.getElementById('ingredient-drawer');
+        if (drawer) {
+            const header = drawer.querySelector('.ingredient-drawer-header');
+            let isDragging = false;
+            let offset = { x: 0, y: 0 };
+
+            header.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                offset.x = e.clientX - drawer.offsetLeft;
+                offset.y = e.clientY - drawer.offsetTop;
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                // 画面外に行かないように制限をかけることも可能ですが、まずは自由に移動させます
+                drawer.style.left = (e.clientX - offset.x) + 'px';
+                drawer.style.top = (e.clientY - offset.y) + 'px';
+                drawer.style.right = 'auto'; // 初期の固定位置を解除
+                drawer.style.bottom = 'auto';
+            });
+
+            document.addEventListener('mouseup', () => {
+                isDragging = false;
+            });
+        }
+    </script>
+</body>
+
+</html>

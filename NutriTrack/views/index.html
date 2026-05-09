@@ -1,0 +1,195 @@
+<head>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<header>
+    <h1>レシピ一覧</h1>
+</header>
+
+<div class="grid">
+    <!-- 左カラム: 検索とレシピ一覧 -->
+    <div>
+        <section>
+            <h2>食品を探す</h2>
+            <form action="/" method="GET">
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" name="q" placeholder="食品名で検索..." value="{{.Query}}">
+                    <button type="submit">食品検索</button>
+                </div>
+            </form>
+
+            {{if .Foods}}
+            <figure>
+                <table role="grid">
+                    <thead>
+                        <tr>
+                            <th>食品名</th>
+                            <th style="width: 120px;">重量(g)</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Foods}}
+                        <tr>
+                            <td><a href="/food/{{.num_id}}">[{{.num_id}}] {{.name}}</a></td>
+                            <td>
+                                <form hx-post="/ingredients/add" hx-target="#sidebar-container" hx-select="#sidebar-container" style="margin:0;">
+                                    <input type="hidden" name="id" value="{{.num_id}}">
+                                    <input type="hidden" name="name" value="{{.name}}">
+                                    <input type="number" name="weight" value="100" style="padding: 2px 5px; height: auto; margin:0;">
+                                    <button type="submit" class="outline" style="padding: 2px 10px; font-size: 0.8rem; margin:0;">追加</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </figure>
+            {{end}}
+        </section>
+
+        <section>
+            <h2>レシピを探す</h2>
+            <form action="/" method="GET">
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" name="rq" placeholder="レシピ名で検索..." value="{{.RecipeQuery}}">
+                    <button type="submit" class="contrast">レシピ検索</button>
+                </div>
+            </form>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem;">
+                {{range .Recipes}}
+                <article>
+                    <header><strong>{{.Title}}</strong></header>
+                    <p style="font-size: 0.8rem; min-height: 3em;">{{.Description}}</p>
+                    <footer>
+                        <a href="/recipe/{{.ID}}" class="outline" style="font-size: 0.8rem;">詳しく見る</a>
+                    </footer>
+                </article>
+                {{else}}
+                <p>レシピがまだありません。</p>
+                {{end}}
+            </div>
+        </section>
+    </div>
+
+    <!-- 右カラム: 材料リスト -->
+    <aside id="sidebar-container">
+        <article>
+            <header><strong>作成中の材料リスト</strong></header>
+            
+            <div style="margin-bottom: 20px;">
+                <canvas id="nutrientChart"></canvas>
+            </div>
+
+            {{if .Ingredients}}
+                <ul>
+                    {{range .Ingredients}}
+                    <li style="margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <form hx-post="/ingredients/update" hx-trigger="change" hx-target="#sidebar-container" hx-select="#sidebar-container" style="margin:0; display: flex; align-items: center; gap: 5px;">
+                                <input type="hidden" name="id" value="{{.num_id}}">
+                                <span style="font-size: 0.9rem; min-width: 80px;">[{{.num_id}}] {{.name}}</span>
+                                <input type="number" name="weight" value="{{.weight}}" 
+                                       style="width: 70px; padding: 2px 5px; height: auto; margin:0; font-size: 0.8rem;"
+                                       >
+                                <span style="font-size: 0.8rem;">g</span>
+                            </form>
+                            <form hx-post="/ingredients/remove" hx-target="#sidebar-container" hx-select="#sidebar-container" style="margin:0;">
+                                <input type="hidden" name="id" value="{{.num_id}}">
+                                <button type="submit" class="outline secondary" style="padding: 2px 8px; font-size: 0.7rem; border:none; margin:0;">✕</button>
+                            </form>
+                        </div>
+                    </li>
+                    {{end}}
+                </ul>
+                <a href="/recipe/new" role="button" class="contrast" style="width: 100%;">この材料でレシピ作成</a>
+            {{else}}
+                <p><small>リストは空です。食品を検索して追加してください。</small></p>
+            {{end}}
+            
+            <hr>
+            <footer>
+                <strong>よく使う材料</strong>
+                <div style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;">
+                    {{range .MyIngredients}}
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <span>[{{.num_id}}] {{.name}}</span>
+                        <form hx-post="/ingredients/add" hx-target="#sidebar-container" hx-select="#sidebar-container" style="margin:0;">
+                            <input type="hidden" name="id" value="{{.num_id}}">
+                            <input type="hidden" name="name" value="{{.name}}">
+                            <button type="submit" class="outline" style="padding: 2px 8px; font-size: 0.7rem;">+</button>
+                        </form>
+                    </div>
+                    {{end}}
+                </div>
+            </footer>
+
+            <script>
+                (function() {
+                    var ctx = document.getElementById('nutrientChart').getContext('2d');
+                    var chartData = {
+                        labels: [
+                            'エネルギー (' + {{.Summary.Energy}}.toFixed(0) + ' kcal)',
+                            'たんぱく質 (' + {{.Summary.Prot}}.toFixed(1) + ' g)',
+                            '脂質 (' + {{.Summary.Fat}}.toFixed(1) + ' g)',
+                            '炭水化物 (' + {{.Summary.Cho}}.toFixed(1) + ' g)',
+                            'カリウム (' + {{.Summary.K}}.toFixed(0) + ' mg)',
+                            'カルシウム (' + {{.Summary.Ca}}.toFixed(0) + ' mg)',
+                            '鉄 (' + {{.Summary.Fe}}.toFixed(1) + ' mg)',
+                            '亜鉛 (' + {{.Summary.Zn}}.toFixed(1) + ' mg)',
+                            'ビタミンA (' + {{.Summary.VitA}}.toFixed(0) + ' μg)',
+                            'ビタミンB (' + {{.Summary.VitB}}.toFixed(2) + ' mg)',
+                            'ビタミンC (' + {{.Summary.VitC}}.toFixed(0) + ' mg)',
+                            '食物繊維 (' + {{.Summary.Fiber}}.toFixed(1) + ' g)',
+                            '食塩相当量 (' + {{.Summary.Salt}}.toFixed(2) + ' g)'
+                        ],
+                        datasets: [{
+                            label: '1食分目安(%)',
+                            data: [
+                                // 100%を超えても120%でキャップしてグラフの崩れを防ぐ
+                                Math.min(({{.Summary.Energy}} / 700) * 100, 120),
+                                Math.min(({{.Summary.Prot}} / 20) * 100, 120),
+                                Math.min(({{.Summary.Fat}} / 20) * 100, 120),
+                                Math.min(({{.Summary.Cho}} / 100) * 100, 120),
+                                Math.min(({{.Summary.K}} / 800) * 100, 120),
+                                Math.min(({{.Summary.Ca}} / 200) * 100, 120),
+                                Math.min(({{.Summary.Fe}} / 2.5) * 100, 120),
+                                Math.min(({{.Summary.Zn}} / 3.0) * 100, 120),
+                                Math.min(({{.Summary.VitA}} / 250) * 100, 120),
+                                Math.min(({{.Summary.VitB}} / 0.4) * 100, 120),
+                                Math.min(({{.Summary.VitC}} / 33) * 100, 120),
+                                Math.min(({{.Summary.Fiber}} / 6.0) * 100, 120),
+                                Math.min(({{.Summary.Salt}} / 2.5) * 100, 120)
+                            ],
+                            fill: true,
+                            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                            borderColor: 'rgb(54, 162, 235)',
+                            pointBackgroundColor: 'rgb(54, 162, 235)',
+                        }]
+                    };
+
+                    new Chart(ctx, {
+                        type: 'radar',
+                        data: chartData,
+                        options: {
+                            animation: false,
+                            elements: { line: { borderWidth: 3 } },
+                            scales: {
+                                r: {
+                                    angleLines: { display: false },
+                                    suggestedMin: 0,
+                                    suggestedMax: 100, // 100%を基準線にする
+                                    ticks: { display: false }
+                                }
+                            },
+                            plugins: { legend: { display: false } }
+                        }
+                    });
+                })();
+            </script>
+        </article>
+    </aside>
+</div>

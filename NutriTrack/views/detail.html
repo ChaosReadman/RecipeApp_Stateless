@@ -1,0 +1,20 @@
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/">一覧に戻る</a></li>
+    <li>詳細: {{.Food.name}}</li>
+  </ul>
+</nav>
+
+<article>
+  <header>
+    <h2>{{.Food.name}}</h2>
+  </header>
+  <dl>
+    {{range $key, $value := .Food}}
+      {{if $value}}
+        <dt><strong>{{$key}}</strong></dt>
+        <dd>{{$value}}</dd>
+      {{end}}
+    {{end}}
+  </dl>
+</article>

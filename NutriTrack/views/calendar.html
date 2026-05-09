@@ -1,0 +1,148 @@
+<header>
+    <h1>食事カレンダー</h1>
+</header>
+
+<div style="margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; background: var(--pico-card-background-color); padding: 1rem; border-radius: var(--pico-border-radius);">
+    <div style="display: flex; gap: 20px;">
+        <span>摂取: <strong>{{.TotalIntake}}</strong> kcal</span>
+        <span>消費: <strong>{{.BurnedCalories}}</strong> kcal</span>
+        <span>歩数: <strong>{{.Steps}}</strong> 歩</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 15px;">
+    {{$unsynced := false}}
+    {{range .Entries}}{{if not .IsSynced}}{{$unsynced = true}}{{end}}{{end}}
+    {{if or $unsynced (not .HealthSynced)}}
+        <span style="color: #d81b60; font-size: 0.8rem;">⚠️ 未同期の食事があります</span>
+    {{end}}
+    <a href="/api/health/sync?date={{.Date}}" role="button" class="contrast">🔄 Google Fit と同期する</a>
+    </div>
+</div>
+
+<div class="grid">
+    <!-- 食事記録リスト -->
+    <div>
+        <article>
+            <header><strong>メニューを探す</strong></header>
+            <div style="margin-bottom: 1rem; display: flex; gap: 20px;">
+                <label>
+                    <input type="radio" name="search_scope" value="my" checked> マイレシピ
+                </label>
+                <label>
+                    <input type="radio" name="search_scope" value="all"> 全レシピ
+                </label>
+            </div>
+            <div style="display: flex; gap: 10px; margin-bottom: 1rem;">
+                <input type="text" id="recipe-search-q" placeholder="レシピ名で検索...">
+                <button type="button" class="contrast" onclick="searchRecipes()">検索</button>
+            </div>
+            <div id="recipe-search-results" style="max-height: 200px; overflow-y: auto;">
+                <p><small>条件を入力して検索してください</small></p>
+            </div>
+        </article>
+    </div>
+
+    <!-- メニュー登録フォーム -->
+    <div>
+        <article>
+            <header><strong>日付の選択</strong></header>
+            <form action="/calendar" method="GET" style="margin-bottom: 0;">
+                <input type="date" name="date" value="{{.Date}}" onchange="this.form.submit()">
+            </form>
+        </article>
+
+        <article>
+            <header><strong>記録済みメニュー</strong></header>
+            {{if .Entries}}
+                {{range .Entries}}
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding: 8px 0;">
+                    <div>
+                        <mark style="font-size: 0.8rem;">
+                            {{if eq .MealType "breakfast"}}朝食{{else if eq .MealType "lunch"}}昼食{{else if eq .MealType "dinner"}}夕食{{else}}間食{{end}}
+                        </mark>
+                        <span style="font-size: 0.8rem; margin-left: 5px; color: #666;">{{.EntryTime}}</span>
+                        <a href="/recipe/{{.RecipeID}}" style="margin-left: 8px; font-size: 0.9rem;">{{.Title}}</a>
+                        {{if .IsSynced}}
+                            <small style="color: #4caf50; margin-left: 5px;">✓ Synced</small>
+                        {{end}}
+                    </div>
+                    <!-- 削除ボタン（✕）を追加 -->
+                    <form action="/calendar/remove/{{.ID}}" method="POST" style="margin: 0;">
+                        <button type="submit" class="outline secondary" style="padding: 2px 8px; font-size: 0.7rem; border: none; margin: 0; line-height: 1;">✕</button>
+                    </form>
+                </div>
+                {{end}}
+            {{else}}
+                <p><small>この日の記録はまだありません。</small></p>
+            {{end}}
+        </article>
+
+        <article>
+            <header><strong>メニューを登録する</strong></header>
+            <form action="/calendar/add" method="POST" id="calendar-add-form">
+                <input type="hidden" name="date" value="{{.Date}}">
+                
+                <label for="meal_type">食事区分</label>
+                <select name="meal_type" id="meal-type-select" required onchange="updateDefaultTime()">
+                    <option value="breakfast">朝食</option>
+                    <option value="lunch" selected>昼食</option>
+                    <option value="dinner">夕食</option>
+                    <option value="snack">間食</option>
+                </select>
+
+                <label for="entry_time">時刻</label>
+                <input type="time" name="entry_time" id="entry-time-input" value="12:00" required>
+
+                <button type="submit">カレンダーに追加</button>
+            </form>
+        </article>
+    </div>
+</div>
+
+<script>
+async function searchRecipes() {
+    const q = document.getElementById('recipe-search-q').value;
+    const scope = document.querySelector('input[name="search_scope"]:checked').value;
+    
+    const res = await fetch(`/api/recipes/search?q=${encodeURIComponent(q)}&scope=${scope}`);
+    const recipes = await res.json();
+    
+    const resultsDiv = document.getElementById('recipe-search-results');
+    if (recipes.length === 0) {
+        resultsDiv.innerHTML = '<p><small>該当するレシピがありません</small></p>';
+        return;
+    }
+
+    resultsDiv.innerHTML = recipes.map(r => `
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+            <input type="checkbox" name="recipe_ids" value="${r.ID}" form="calendar-add-form">
+            <label style="margin:0; font-size: 0.9rem;">${r.Title}</label>
+        </div>
+    `).join('');
+}
+
+function updateDefaultTime() {
+    const mealType = document.getElementById('meal-type-select').value;
+    const timeInput = document.getElementById('entry-time-input');
+    
+    switch(mealType) {
+        case 'breakfast':
+            timeInput.value = '08:00';
+            break;
+        case 'lunch':
+            timeInput.value = '12:00';
+            break;
+        case 'dinner':
+            timeInput.value = '18:00';
+            break;
+        case 'snack':
+            const now = new Date();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            timeInput.value = `${hours}:${minutes}`;
+            break;
+    }
+}
+
+// 初期ロード時にも適切な値をセットしたい場合は以下を有効化
+// window.addEventListener('DOMContentLoaded', updateDefaultTime);
+</script>

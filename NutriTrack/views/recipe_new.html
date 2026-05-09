@@ -1,0 +1,151 @@
+<nav aria-label="breadcrumb">
+    <ul>
+        <li><a href="/">トップ</a></li>
+        <li>新規レシピ投稿</li>
+    </ul>
+</nav>
+
+<header>
+    <label for="title">レシピ名</label>
+    <input type="text" id="title" name="title" placeholder="例: 極上のだし巻き卵" required form="recipe-form">
+
+    <label for="description">説明</label>
+    <textarea id="description" name="description" placeholder="レシピのポイントなど" form="recipe-form"></textarea>
+</header>
+
+<div class="grid">
+    <!-- 左カラム: 食品検索と材料追加 -->
+    <div>
+        <article>
+            <header><strong>食品を探して追加</strong></header>
+            <form action="/recipe/new" method="GET" style="margin-bottom: 1rem;">
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" name="q" placeholder="食品名で検索..." value="{{.Query}}">
+                    <button type="submit" class="outline">検索</button>
+                </div>
+            </form>
+
+            {{if .Foods}}
+            <div style="max-height: 200px; overflow-y: auto; margin-bottom: 1rem; border: 1px solid var(--pico-muted-border-color); padding: 10px; border-radius: var(--pico-border-radius);">
+                <table role="grid" style="margin-bottom: 0; font-size: 0.9rem;">
+                    <tbody>
+                        {{range .Foods}}
+                        <tr>
+                            <td>{{.Name}}</td>
+                            <td style="text-align: right;">
+                                <form action="/ingredients/add" method="POST" style="margin:0;">
+                                    <input type="hidden" name="id" value="{{.ID}}">
+                                    <input type="hidden" name="name" value="{{.Name}}">
+                                    <button type="submit" class="outline" style="padding: 2px 8px; font-size: 0.7rem;">追加</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{end}}
+
+            <header><strong>材料</strong></header>
+            {{if .Ingredients}}
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    {{range .Ingredients}}
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 10px; border: 1px solid var(--pico-form-element-border-color); border-radius: var(--pico-border-radius);">
+                        <input type="hidden" name="ingredient_ids" value="{{.ID}}" form="recipe-form">
+                        <span style="flex-basis: 100%; font-weight: bold;">{{.Name}}</span>
+                        <input type="number" name="qty_{{.ID}}" value="{{.Quantity}}" placeholder="量 (g)" required style="flex-grow: 1; min-width: 80px; margin-bottom: 0;" form="recipe-form">
+                        <input type="text" name="grp_{{.ID}}" value="{{.GroupName}}" placeholder="グループ名" style="flex-grow: 2; min-width: 120px; margin-bottom: 0;" form="recipe-form">
+                        <form action="/ingredients/remove/{{.ID}}" method="POST" style="margin:0;">
+                            <button type="submit" class="outline secondary" style="padding: 2px 8px; font-size: 0.7rem; border:none; margin-bottom: 0;">✕</button>
+                        </form>
+                    </div>
+                    {{end}}
+                </div>
+            {{else}}
+                <p><small>材料リストは空です。</small></p>
+            {{end}}
+        </article>
+    </div>
+
+    <!-- 右カラム: 調理工程 -->
+    <div>
+        <article>
+            <header><strong>作り方</strong></header>
+            <div id="steps-container">
+                <div class="step-item" style="display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;">
+                    <span class="step-num">1.</span>
+                    <textarea name="steps" placeholder="工程の説明を入れてください" required form="recipe-form"></textarea>
+                    <div style="display: flex; flex-direction: column; gap: 5px;">
+                        <button type="button" class="outline" style="padding: 2px 4px; margin:0;" onclick="moveStep(this, -1)">↑</button>
+                        <button type="button" class="outline" style="padding: 2px 4px; margin:0;" onclick="moveStep(this, 1)">↓</button>
+                        <button type="button" class="outline secondary" style="padding: 2px 4px; margin:0;" onclick="removeStep(this)">×</button>
+                    </div>
+                </div>
+            </div>
+            <button type="button" class="outline" style="width: 100%;" onclick="addStep()">工程を追加</button>
+        </article>
+    </div>
+</div>
+
+<form action="/recipe/create" method="POST" id="recipe-form">
+</form>
+
+<div style="margin-top: 2rem;">
+    <button type="submit" form="recipe-form">レシピを投稿する</button>
+    <a href="/" role="button" class="outline secondary">キャンセル</a>
+</div>
+
+<script>
+    function addStep() {
+        const container = document.getElementById('steps-container');
+        const stepCount = container.getElementsByClassName('step-item').length + 1;
+        const div = document.createElement('div');
+        div.className = 'step-item';
+        div.setAttribute('style', 'display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;');
+        div.innerHTML = `
+            <span class="step-num">${stepCount}.</span>
+            <textarea name="steps" placeholder="工程の説明を入れてください" required></textarea>
+            <div style="display: flex; flex-direction: column; gap: 5px;">
+                <button type="button" class="outline" style="padding: 2px 8px;" onclick="moveStep(this, -1)">↑</button>
+                <button type="button" class="outline" style="padding: 2px 8px;" onclick="moveStep(this, 1)">↓</button>
+                <button type="button" class="outline secondary" style="padding: 2px 8px;" onclick="removeStep(this)">×</button>
+            </div>
+        `;
+        container.appendChild(div);
+        updateStepNumbers();
+    }
+
+    function removeStep(btn) {
+        const container = document.getElementById('steps-container');
+        if (container.getElementsByClassName('step-item').length > 1) {
+            btn.closest('.step-item').remove();
+            updateStepNumbers();
+        }
+    }
+
+    function moveStep(btn, direction) {
+        const item = btn.closest('.step-item');
+        const container = document.getElementById('steps-container');
+        
+        if (direction === -1) {
+            const prev = item.previousElementSibling;
+            if (prev) {
+                container.insertBefore(item, prev);
+            }
+        } else if (direction === 1) {
+            const next = item.nextElementSibling;
+            if (next) {
+                container.insertBefore(next, item);
+            }
+        }
+        updateStepNumbers();
+    }
+
+    function updateStepNumbers() {
+        const container = document.getElementById('steps-container');
+        const nums = container.getElementsByClassName('step-num');
+        for (let i = 0; i < nums.length; i++) {
+            nums[i].innerText = (i + 1) + ".";
+        }
+    }
+</script>

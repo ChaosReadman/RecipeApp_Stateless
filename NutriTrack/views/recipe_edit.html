@@ -1,0 +1,138 @@
+<nav aria-label="breadcrumb">
+    <ul>
+        <li><a href="/">トップ</a></li>
+        <li><a href="/recipe/{{.Recipe.ID}}">レシピ詳細</a></li>
+        <li>レシピ編集</li>
+    </ul>
+</nav>
+
+<header>
+    <label for="title">レシピ名</label>
+    <input type="text" id="title" name="title" value="{{.Recipe.Title}}" required form="recipe-form">
+
+    <label for="description">説明</label>
+    <textarea id="description" name="description" form="recipe-form">{{.Recipe.Description}}</textarea>
+</header>
+
+    <div class="grid">
+        <!-- 左カラム: 材料リスト (詳細画面の構成に合わせる) -->
+        <div>
+            <article>
+                <header><strong>食品を探して追加</strong></header>
+                <form action="/recipe/{{.Recipe.ID}}/edit" method="GET" style="margin-bottom: 1rem;">
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" name="q" placeholder="食品名で検索..." value="{{.Query}}">
+                        <button type="submit" class="outline">検索</button>
+                    </div>
+                </form>
+
+                {{if .Foods}}
+                <div style="max-height: 200px; overflow-y: auto; margin-bottom: 1rem; border: 1px solid var(--pico-muted-border-color); padding: 10px; border-radius: var(--pico-border-radius);">
+                    <table role="grid" style="margin-bottom: 0; font-size: 0.9rem;">
+                        <tbody>
+                            {{range .Foods}}
+                            <tr>
+                                <td>{{.Name}}</td>
+                                <td style="text-align: right;">
+                                    <button type="submit" form="add-search-{{.ID}}" class="outline" style="padding: 2px 8px; font-size: 0.7rem;">追加</button>
+                                    <form id="add-search-{{.ID}}" action="/ingredients/add" method="POST" style="display:none;">
+                                        <input type="hidden" name="id" value="{{.ID}}">
+                                        <input type="hidden" name="name" value="{{.Name}}">
+                                    </form>
+                                </td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+                {{end}}
+
+                <header><strong>材料</strong></header>
+                {{if .Ingredients}}
+                    <!-- 材料リストを recipe-form に紐付け -->
+                    <div style="display: flex; flex-direction: column; gap: 10px;" id="ingredients-list">
+                        {{range .Ingredients}}
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 10px; border: 1px solid var(--pico-form-element-border-color); border-radius: var(--pico-border-radius);">
+                            <input type="hidden" name="ingredient_ids" value="{{.ID}}" form="recipe-form">
+                            <span style="flex-basis: 100%; font-weight: bold;">{{.Name}}</span>
+                            <input type="number" name="qty_{{.ID}}" value="{{.Quantity}}" placeholder="量 (g)" required style="flex-grow: 1; min-width: 80px; margin-bottom: 0;" form="recipe-form">
+                            <input type="text" name="grp_{{.ID}}" value="{{.GroupName}}" placeholder="グループ名" style="flex-grow: 2; min-width: 120px; margin-bottom: 0;" form="recipe-form">
+                            <button type="submit" form="remove-form-{{.ID}}" class="outline secondary" style="padding: 2px 8px; font-size: 0.7rem; border:none; margin-bottom: 0;">✕</button>
+                        </div>
+                        {{end}}
+                    </div>
+                {{else}}
+                    <p><small>材料がありません。食品を検索して追加してください。</small></p>
+                {{end}}
+                
+                <hr>
+                <footer>
+                    <strong>よく使う材料から追加</strong>
+                    <div style="max-height: 200px; overflow-y: auto; font-size: 0.8rem; margin-top: 10px;">
+                        {{range .MyIngredients}}
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                            <span>{{.Name}}</span>
+                            <button type="submit" form="add-form-{{.ID}}" class="outline" style="padding: 2px 8px; font-size: 0.7rem;">+</button>
+                        </div>
+                        {{end}}
+                    </div>
+                </footer>
+            </article>
+        </div>
+
+        <!-- 右カラム: 調理工程 (詳細画面の構成に合わせる) -->
+        <div>
+            <article>
+                <header><strong>作り方</strong></header>
+                <div id="steps-container">
+                    {{range .Recipe.Steps}}
+                    <div class="step-item" style="display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;">
+                        <span class="step-num">{{.StepNumber}}.</span>
+                        <textarea name="steps" required style="margin-bottom: 0;" form="recipe-form">{{.Instruction}}</textarea>
+                        <div style="display: flex; flex-direction: column; gap: 5px;">
+                            <button type="button" class="outline" style="padding: 2px 4px; margin: 0;" onclick="moveStep(this, -1)">↑</button>
+                            <button type="button" class="outline" style="padding: 2px 4px; margin: 0;" onclick="moveStep(this, 1)">↓</button>
+                            <button type="button" class="outline secondary" style="padding: 2px 4px; margin: 0;" onclick="removeStep(this)">×</button>
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+                <button type="button" class="outline" style="width: 100%;" onclick="addStep()">工程を追加</button>
+            </article>
+        </div>
+    </div>
+
+    <!-- メインの更新フォームはここに配置（ネストを解消） -->
+    <form action="/recipe/{{.Recipe.ID}}/update" method="POST" id="recipe-form">
+    </form>
+
+    <div style="margin-top: 2rem; display: flex; gap: 10px;">
+        <button type="submit" form="recipe-form">更新を保存する</button>
+        <a href="/recipe/{{.Recipe.ID}}" role="button" class="outline secondary">キャンセル</a>
+    </div>
+
+<!-- 材料操作用の隠しフォーム -->
+{{range .Ingredients}}
+<form id="remove-form-{{.ID}}" action="/ingredients/remove/{{.ID}}" method="POST" style="display:none;"></form>
+{{end}}
+{{range .MyIngredients}}
+<form id="add-form-{{.ID}}" action="/ingredients/add" method="POST" style="display:none;">
+    <input type="hidden" name="id" value="{{.ID}}">
+    <input type="hidden" name="name" value="{{.Name}}">
+</form>
+{{end}}
+
+<script>
+    function addStep() {
+        const container = document.getElementById('steps-container');
+        const stepCount = container.getElementsByClassName('step-item').length + 1;
+        const div = document.createElement('div');
+        div.className = 'step-item';
+        div.setAttribute('style', 'display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;');
+        div.innerHTML = `<span class="step-num">${stepCount}.</span><textarea name="steps" required></textarea><div style="display: flex; flex-direction: column; gap: 5px;"><button type="button" class="outline" style="padding: 2px 8px;" onclick="moveStep(this, -1)">↑</button><button type="button" class="outline" style="padding: 2px 8px;" onclick="moveStep(this, 1)">↓</button><button type="button" class="outline secondary" style="padding: 2px 8px;" onclick="removeStep(this)">×</button></div>`;
+        container.appendChild(div);
+    }
+    function removeStep(btn) { if (document.getElementsByClassName('step-item').length > 1) { btn.closest('.step-item').remove(); updateStepNumbers(); } }
+    function moveStep(btn, dir) { const item = btn.closest('.step-item'); const container = document.getElementById('steps-container'); if (dir === -1 && item.previousElementSibling) container.insertBefore(item, item.previousElementSibling); else if (dir === 1 && item.nextElementSibling) container.insertBefore(item.nextElementSibling, item); updateStepNumbers(); }
+    function updateStepNumbers() { const nums = document.getElementsByClassName('step-num'); for (let i = 0; i < nums.length; i++) nums[i].innerText = (i + 1) + "."; }
+</script>

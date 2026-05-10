@@ -4,7 +4,7 @@
 + 食品成分表SQLiteに変換し検索文字列に対応した全栄養情報を返します。（こちらは適当なサーバにサービスを立てる）
 + 上記サービスから材料を選択し、献立を作成、朝食、昼食、夕食でそれら献立を組み合わせ日付時刻を登録する（登録先は自分のGoogleアカウントのスプレッドシート）
 
-## 1. 環境構築
+## 1. nutrient-apiの開発
 
 ```bash
 cd RecipeApp_Stateless/nutrient-api
@@ -12,7 +12,7 @@ cd RecipeApp_Stateless/nutrient-api
 go mod init nutrient-api
 go mod tidy
 ```
-## 2. データベースの準備
+## 2. 栄養素データベースの準備
 XMLデータからSQLiteデータベース（`data/nutrient.db`）を生成します。
 
 ```bash
@@ -20,7 +20,7 @@ cd data
 python3 data/xml_to_sqlite.py
 ```
 
-## 3.献立登録アプリの開発
+## 3.NutriTrack（献立登録アプリ）の開発
 
 ```bash
 cd RecipeApp_Stateless/NutriTrack
@@ -38,26 +38,13 @@ go mod tidy
 ```bash
 go get -u github.com/air-verse/air
 go install github.com/air-verse/air@latest
-echo 'export GOPATH=$(go env GOPATH)' >> ~/.zshrc
-echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.zshrc
-source ~/.zshrc
+echo 'export GOPATH=$(go env GOPATH)' >> ~/.zprofile
+echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.zprofile
+source ~/.zprofile
 ```
 
 
-## 4. 開発サーバーの起動（ホットリロード有効）
-
-実行には環境変数の設定が必要です。
-
-プロジェクトルートに `.env` ファイルを作成してください：
-※ 値はチームの共有パスワードマネージャーを参照してください。
-
-```env
-GOOGLE_CLIENT_ID="あなたのクライアントID"
-GOOGLE_CLIENT_SECRET="あなたのクライアントシークレット"
-GOOGLE_REDIRECT_URL="http://localhost:3000/auth/callback"
-```
-
-その後、以下のコマンドで起動します：
+## 4. NutriTrackのの起動（ホットリロード有効）
 
 ```bash
 air

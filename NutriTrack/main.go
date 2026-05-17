@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/template/html/v2"
@@ -16,6 +17,20 @@ import (
 
 // 全データをそのまま保持する型定義 (APIのレスポンス形式)
 type FoodMap map[string]any
+
+// APIレスポンスのキーをすべて小文字に正規化するヘルパー
+func normalizeKeys(m FoodMap) FoodMap {
+	newMap := make(FoodMap)
+	for k, v := range m {
+		newMap[strings.ToLower(k)] = v
+	}
+	return newMap
+}
+
+// API通信用の共通クライアント（タイムアウトを設定）
+var apiClient = &http.Client{
+	Timeout: 5 * time.Second,
+}
 
 // 一時的なメモリ保存用（本来はセッションやDBで管理）
 var (
@@ -145,7 +160,7 @@ func main() {
 		if query != "" {
 			// nutrient-api へのリクエスト
 			apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", url.QueryEscape(query))
-			resp, err := http.Get(apiUrl)
+			resp, err := apiClient.Get(apiUrl)
 			if err == nil {
 				defer resp.Body.Close()
 				if decodeErr := json.NewDecoder(resp.Body).Decode(&foods); decodeErr != nil {
@@ -157,6 +172,10 @@ func main() {
 						keys = append(keys, k)
 					}
 					log.Printf("[DEBUG] API Response Keys: %v", keys)
+					// 検索結果のキーを正規化
+					for i, f := range foods {
+						foods[i] = normalizeKeys(f)
+					}
 				}
 			}
 		}
@@ -190,7 +209,7 @@ func main() {
 			found := false
 			for i := range selectedIngredients {
 				// どんな型でも文字列にして比較（末尾の.0も除去）
-				itemIDStr := strings.Split(fmt.Sprintf("%v", selectedIngredients[i]["num_id"]), ".")[0]
+				itemIDStr := strings.TrimSuffix(fmt.Sprintf("%v", selectedIngredients[i]["num_id"]), ".0")
 				if itemIDStr == id {
 					currentW, _ := selectedIngredients[i]["weight"].(float64)
 					selectedIngredients[i]["weight"] = currentW + weight
@@ -208,22 +227,23 @@ func main() {
 
 			// 詳細な栄養素を取得するためにAPIを叩く
 			var details []FoodMap
+			// APIの仕様(id=)に合わせてリクエスト
 			apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", url.QueryEscape(id))
 			log.Printf("[API FETCH] URL: %s", apiUrl)
-			resp, err := http.Get(apiUrl)
-			if err == nil {
-				defer resp.Body.Close()
-				if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr != nil {
-					log.Printf("[API ERROR] Decode failed: %v", decodeErr)
-				}
+			resp, err := apiClient.Get(apiUrl)
+			if err != nil {
+				log.Printf("[API ERROR] Request failed: %v", err)
+			} else if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr != nil {
+				log.Printf("[API ERROR] Decode failed: %v", decodeErr)
 			}
 
 			var nutrientData FoodMap
 			if len(details) > 0 {
-				nutrientData = details[0] // APIから取得した全データをそのまま保持
+				nutrientData = normalizeKeys(details[0]) // キーを正規化して保持
 				nutrientData["weight"] = weight
 			} else {
-				// 万が一APIにデータがない場合でも最低限の情報で追加
+				// データが取得できなかった場合
+				log.Printf("[WARN] No nutrient data found for ID: %s. Check if API is working correctly.", id)
 				nutrientData = FoodMap{"num_id": id, "name": name, "weight": weight}
 			}
 
@@ -241,7 +261,8 @@ func main() {
 		log.Printf("[ACTION: UPDATE] ID: %s, New Weight: %.1f", id, weight)
 		mu.Lock()
 		for i := range selectedIngredients {
-			if fmt.Sprintf("%v", selectedIngredients[i]["num_id"]) == id {
+			itemIDStr := strings.TrimSuffix(fmt.Sprintf("%v", selectedIngredients[i]["num_id"]), ".0")
+			if itemIDStr == id {
 				selectedIngredients[i]["weight"] = weight
 				break
 			}
@@ -276,5 +297,6 @@ func main() {
 	// 静的ファイルの配信設定（ルート定義の後に配置）
 	app.Static("/", "./public")
 
-	log.Fatal(app.Listen(":3000"))
+	// 127.0.0.1:3000 で起動（APIの8080と分ける）
+	log.Fatal(app.Listen("127.0.0.1:3000"))
 }

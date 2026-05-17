@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch NutriTrack",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/NutriTrack/main.go",
+            "buildFlags": "-gcflags=\"all=-N -l\"",
+            "serverReadyAction": {
+                "action": "openExternally",
+                "pattern": "127.0.0.1:3000",
+                "uriFormat": "http://127.0.0.1:3000"
+            }
+        }
+    ]
+}

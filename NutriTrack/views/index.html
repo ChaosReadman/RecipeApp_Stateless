@@ -60,6 +60,7 @@
             {{end}}
         </section>
 
+        {{if .User}}
         <section>
             <h2>レシピを探す</h2>
             <form action="/" method="GET">
@@ -83,6 +84,7 @@
                 {{end}}
             </div>
         </section>
+        {{end}}
     </div>
 
     <!-- 右カラム: 材料リスト -->
@@ -115,7 +117,9 @@
                     </li>
                     {{end}}
                 </ul>
-                <a href="/recipe/new" role="button" class="contrast" style="width: 100%;">この材料でレシピ作成</a>
+                {{if .User}}
+                    <a href="/recipe/new" role="button" class="contrast" style="width: 100%;">この材料でレシピ作成</a>
+                {{end}}
             {{else}}
                 <p><small>リストは空です。食品を検索して追加してください。</small></p>
             {{end}}

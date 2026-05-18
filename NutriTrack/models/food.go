@@ -72,7 +72,7 @@ func GetByID(db *sql.DB, id string) (map[string]interface{}, error) {
 }
 
 // GetUserRecipeIngredients はユーザーがレシピで使用したことのある材料を取得します
-func GetUserRecipeIngredients(db *sql.DB, userID int) ([]Food, error) {
+func GetUserRecipeIngredients(db *sql.DB, userID string) ([]Food, error) {
 	query := `
 		SELECT DISTINCT f.food_id, f.name 
 		FROM foods f 
@@ -122,7 +122,7 @@ func SearchRecipes(db *sql.DB, query string) ([]map[string]interface{}, error) {
 }
 
 // SearchRecipesScoped は範囲（マイレシピ/全レシピ）を指定して検索します
-func SearchRecipesScoped(db *sql.DB, query string, userID int, scope string) ([]map[string]interface{}, error) {
+func SearchRecipesScoped(db *sql.DB, query string, userID string, scope string) ([]map[string]interface{}, error) {
 	var rows *sql.Rows
 	var err error
 
@@ -166,7 +166,7 @@ type RecipeStepDetail struct {
 
 type RecipeFull struct {
 	ID            int
-	UserID        int
+	UserID        string
 	Title         string
 	Description   string
 	Ingredients   []RecipeIngredientDetail
@@ -241,7 +241,7 @@ type CalendarEntryDetail struct {
 }
 
 // GetCalendarEntries は指定したユーザーと日付の食事記録を取得します
-func GetCalendarEntries(db *sql.DB, userID int, date string) ([]CalendarEntryDetail, error) {
+func GetCalendarEntries(db *sql.DB, userID string, date string) ([]CalendarEntryDetail, error) {
 	query := `
 		SELECT ce.id, ce.recipe_id, r.title, ce.meal_type, DATE(ce.entry_date), COALESCE(ce.entry_time, '00:00'), ce.is_synced
 		FROM calendar_entries ce
@@ -269,7 +269,7 @@ func GetCalendarEntries(db *sql.DB, userID int, date string) ([]CalendarEntryDet
 }
 
 // GetUserRecipes はユーザーが作成したレシピ一覧を取得します
-func GetUserRecipes(db *sql.DB, userID int) ([]map[string]interface{}, error) {
+func GetUserRecipes(db *sql.DB, userID string) ([]map[string]interface{}, error) {
 	rows, err := db.Query("SELECT id, title FROM recipes WHERE user_id = ? ORDER BY created_at DESC", userID)
 	if err != nil {
 		return nil, err
@@ -286,7 +286,7 @@ func GetUserRecipes(db *sql.DB, userID int) ([]map[string]interface{}, error) {
 }
 
 // GetDailyCalories は指定したユーザーと日付の合計摂取カロリーを計算します
-func GetDailyCalories(db *sql.DB, userID int, date string) (float64, int, error) {
+func GetDailyCalories(db *sql.DB, userID string, date string) (float64, int, error) {
 	query := `
 		SELECT SUM(f.enerc_kcal * ri.quantity / 100.0)
 		FROM calendar_entries ce
@@ -307,7 +307,7 @@ func GetDailyCalories(db *sql.DB, userID int, date string) (float64, int, error)
 }
 
 // GetDailyHealthData は指定したユーザーと日付の歩数と消費カロリーを取得します
-func GetDailyHealthData(db *sql.DB, userID int, date string) (int, int, bool) {
+func GetDailyHealthData(db *sql.DB, userID string, date string) (int, int, bool) {
 	var steps, calories int
 	var isSynced bool
 	query := "SELECT steps, burned_calories, is_synced FROM daily_health_data WHERE user_id = ? AND date(date) = ?"
@@ -320,7 +320,7 @@ func GetDailyHealthData(db *sql.DB, userID int, date string) (int, int, bool) {
 }
 
 // GetMealTypeNutrition は指定したユーザー、日付、食事区分の合計栄養素を取得します
-func GetMealTypeNutrition(db *sql.DB, userID int, date, mealType string) (*RecipeFull, error) {
+func GetMealTypeNutrition(db *sql.DB, userID string, date, mealType string) (*RecipeFull, error) {
 	var totalNutrition RecipeFull
 	totalNutrition.Title = mealType
 

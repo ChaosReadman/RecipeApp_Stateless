@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"NutriTrack/models"
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"log"
@@ -15,7 +13,6 @@ import (
 )
 
 type AuthHandler struct {
-	DB          *sql.DB
 	Store       *session.Store
 	OAuthConfig *oauth2.Config
 }
@@ -102,15 +99,9 @@ func (h *AuthHandler) Callback(c *fiber.Ctx) error {
 		return c.Status(500).SendString("プロフィールの解析に失敗しました")
 	}
 
-	// DBでユーザーを特定または作成
-	user, err := models.FindOrCreate(h.DB, "google", profile.ID) // email, name はDBに保存しないため渡さない
-	if err != nil {
-		return c.Status(500).SendString(err.Error())
-	}
-
 	tokenData, _ := json.Marshal(token)
 
-	sess.Set("user_id", user.ID)
+	sess.Set("user_id", profile.ID)    // GoogleのID（文字列）をそのまま識別子として使用
 	sess.Set("username", profile.Name) // ユーザー名はGoogleから取得したものを直接セッションに保存
 	sess.Set("oauth_token", string(tokenData))
 	if err := sess.Save(); err != nil {

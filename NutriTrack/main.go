@@ -2,7 +2,8 @@ package main
 
 import (
 	"NutriTrack/handlers"
-	"database/sql"
+	"NutriTrack/services"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,13 +12,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/gofiber/template/html/v2"
-	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -38,12 +37,6 @@ func normalizeKeys(m FoodMap) FoodMap {
 var apiClient = &http.Client{
 	Timeout: 5 * time.Second,
 }
-
-// 一時的なメモリ保存用（本来はセッションやDBで管理）
-var (
-	mu                  sync.Mutex
-	selectedIngredients []FoodMap
-)
 
 // 合計栄養素を計算する構造体
 type NutrientSummary struct {
@@ -67,34 +60,18 @@ var myIngredients = []FoodMap{
 	{"num_id": "01002", "name": "あわ　精白粒", "weight": 100.0},
 }
 
-// スレッドセーフに材料リストを取得するヘルパー
-func getIngredients() []FoodMap {
-	mu.Lock()
-	defer mu.Unlock()
-	res := make([]FoodMap, len(selectedIngredients))
-	copy(res, selectedIngredients)
-	return res
+// セッションから材料リストを取得するヘルパー
+func getIngredients(sess *session.Session) []FoodMap {
+	var ingredients []FoodMap
+	if raw := sess.Get("ingredients"); raw != nil {
+		if err := json.Unmarshal([]byte(raw.(string)), &ingredients); err != nil {
+			log.Printf("[SESSION ERROR] Failed to unmarshal ingredients: %v", err)
+		}
+	}
+	return ingredients
 }
 
 func main() {
-	// 1. データベースの初期化
-	db, err := sql.Open("sqlite3", "./nutritrack.db")
-	if err != nil {
-		log.Fatal(err)
-	}
-	// データベースのテーブル初期化
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
-		id INTEGER PRIMARY KEY AUTOINCREMENT, 
-		-- email TEXT UNIQUE, -- プロフィール情報はDBに保存しない
-		-- name TEXT,         -- プロフィール情報はDBに保存しない
-		provider TEXT,
-		external_id TEXT,
-		fit_data_source_id TEXT
-	)`)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
 
 	// 2. セッションストアの初期化
 	store := session.New(session.Config{
@@ -120,19 +97,18 @@ func main() {
 			"https://www.googleapis.com/auth/userinfo.email",
 			"https://www.googleapis.com/auth/userinfo.profile",
 			"https://www.googleapis.com/auth/spreadsheets", // スプレッドシート操作権限
+			"https://www.googleapis.com/auth/drive.file",   // アプリが作成したファイルへのアクセス権限
 		},
 		Endpoint: google.Endpoint,
 	}
 
 	// 4. ハンドラの初期化
 	authHandler := &handlers.AuthHandler{
-		DB:          db,
 		Store:       store,
 		OAuthConfig: conf,
 	}
 
 	foodHandler := &handlers.FoodHandler{
-		DB:          db,
 		Store:       store,
 		OAuthConfig: conf,
 	}
@@ -156,8 +132,24 @@ func main() {
 		// セッションからログインユーザー名を取得
 		sess, _ := store.Get(c)
 		userName := sess.Get("username")
+		ingredients := getIngredients(sess)
 
-		ingredients := getIngredients()
+		recipes := []map[string]interface{}{}
+		// ログイン中であればスプレッドシートからレシピを取得
+		if rawToken := sess.Get("oauth_token"); rawToken != nil {
+			var token oauth2.Token
+			if err := json.Unmarshal([]byte(rawToken.(string)), &token); err == nil {
+				client := conf.Client(context.Background(), &token)
+				spreadsheetId, err := services.GetOrCreateRecipeSpreadsheet(c.Context(), client)
+				if err == nil {
+					data, err := services.FetchRecipes(c.Context(), client, spreadsheetId, recipeQuery)
+					if err == nil {
+						recipes = data
+					}
+				}
+			}
+		}
+
 		summary := NutrientSummary{}
 
 		// 合計栄養素の計算
@@ -259,7 +251,7 @@ func main() {
 			"Query":         query,
 			"RecipeQuery":   recipeQuery,
 			"Foods":         foods,
-			"Recipes":       []string{},
+			"Recipes":       recipes,
 			"Ingredients":   ingredients,
 			"Summary":       summary,
 			"MyIngredients": myIngredients,
@@ -268,14 +260,22 @@ func main() {
 	})
 
 	// --- 認証ルート ---
+	authGroup := app.Group("/auth")
 	app.Get("/login", authHandler.ShowLogin)
-	app.Get("/auth/login", authHandler.Login)
-	app.Get("/auth/callback", authHandler.Callback)
+	authGroup.Get("/login", authHandler.Login)
+	authGroup.Get("/callback", authHandler.Callback)
 	app.Get("/logout", authHandler.Logout)
+
+	// --- レシピ関連ルート ---
+	app.Get("/recipe/new", foodHandler.NewRecipe)
+	app.Post("/recipe/create", foodHandler.CreateRecipe)
 
 	// --- 食材・レシピ関連ルート (foodHandlerの例) ---
 	// 食材をリストに追加
 	app.Post("/ingredients/add", func(c *fiber.Ctx) error {
+		sess, _ := store.Get(c)
+		ingredients := getIngredients(sess)
+
 		id := c.FormValue("id")
 		name := c.FormValue("name")
 		weight, _ := strconv.ParseFloat(c.FormValue("weight"), 64)
@@ -285,24 +285,24 @@ func main() {
 
 		if id != "" {
 			log.Printf("[ACTION: ADD] ID: %s, Name: %s", id, name)
-			mu.Lock()
 			// すでにリストに存在する食材かチェック
 			found := false
-			for i := range selectedIngredients {
+			for i := range ingredients {
 				// どんな型でも文字列にして比較（末尾の.0も除去）
-				itemIDStr := strings.TrimSuffix(fmt.Sprintf("%v", selectedIngredients[i]["num_id"]), ".0")
+				itemIDStr := strings.TrimSuffix(fmt.Sprintf("%v", ingredients[i]["num_id"]), ".0")
 				if itemIDStr == id {
-					currentW, _ := selectedIngredients[i]["weight"].(float64)
-					selectedIngredients[i]["weight"] = currentW + weight
-					log.Printf("[ADD] Found existing item. Updated weight to %.1f", selectedIngredients[i]["weight"])
+					currentW, _ := ingredients[i]["weight"].(float64)
+					ingredients[i]["weight"] = currentW + weight
 					found = true
 					break
 				}
 			}
-			mu.Unlock()
 
 			// すでに見つかった場合は重量更新のみで終了
 			if found {
+				data, _ := json.Marshal(ingredients)
+				sess.Set("ingredients", string(data))
+				sess.Save()
 				return c.Redirect("/")
 			}
 
@@ -328,45 +328,53 @@ func main() {
 				nutrientData = FoodMap{"num_id": id, "name": name, "weight": weight}
 			}
 
-			mu.Lock()
-			selectedIngredients = append(selectedIngredients, nutrientData)
-			mu.Unlock()
+			ingredients = append(ingredients, nutrientData)
+			data, _ := json.Marshal(ingredients)
+			sess.Set("ingredients", string(data))
+			sess.Save()
 		}
 		return c.Redirect("/")
 	})
 
 	// 食材の重量を更新
 	app.Post("/ingredients/update", func(c *fiber.Ctx) error {
+		sess, _ := store.Get(c)
+		ingredients := getIngredients(sess)
+
 		id := c.FormValue("id")
 		weight, _ := strconv.ParseFloat(c.FormValue("weight"), 64)
 		log.Printf("[ACTION: UPDATE] ID: %s, New Weight: %.1f", id, weight)
-		mu.Lock()
-		for i := range selectedIngredients {
-			itemIDStr := strings.TrimSuffix(fmt.Sprintf("%v", selectedIngredients[i]["num_id"]), ".0")
+		for i := range ingredients {
+			itemIDStr := strings.TrimSuffix(fmt.Sprintf("%v", ingredients[i]["num_id"]), ".0")
 			if itemIDStr == id {
-				selectedIngredients[i]["weight"] = weight
+				ingredients[i]["weight"] = weight
 				break
 			}
 		}
-		mu.Unlock()
+		data, _ := json.Marshal(ingredients)
+		sess.Set("ingredients", string(data))
+		sess.Save()
 		return c.Redirect("/")
 	})
 
 	// 食材をリストから削除
 	app.Post("/ingredients/remove", func(c *fiber.Ctx) error {
+		sess, _ := store.Get(c)
+		ingredients := getIngredients(sess)
+
 		id := c.FormValue("id")
 		log.Printf("[ACTION: REMOVE] ID: %s", id)
-		mu.Lock()
-		defer mu.Unlock()
 		var newList []FoodMap
-		for _, item := range selectedIngredients {
+		for _, item := range ingredients {
 			// IDを文字列に正規化して比較
 			itemIDStr := strings.TrimSuffix(fmt.Sprintf("%v", item["num_id"]), ".0")
 			if itemIDStr != id {
 				newList = append(newList, item)
 			}
 		}
-		selectedIngredients = newList
+		data, _ := json.Marshal(newList)
+		sess.Set("ingredients", string(data))
+		sess.Save()
 		return c.Redirect("/")
 	})
 

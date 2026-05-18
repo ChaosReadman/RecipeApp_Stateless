@@ -53,7 +53,7 @@
                     <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 10px; border: 1px solid var(--pico-form-element-border-color); border-radius: var(--pico-border-radius);">
                         <input type="hidden" name="ingredient_ids" value="{{.ID}}" form="recipe-form">
                         <span style="flex-basis: 100%; font-weight: bold;">{{.Name}}</span>
-                        <input type="number" name="qty_{{.ID}}" value="{{.Quantity}}" placeholder="量 (g)" required style="flex-grow: 1; min-width: 80px; margin-bottom: 0;" form="recipe-form">
+                        <input type="number" name="qty_{{.ID}}" value="{{.Weight}}" placeholder="量 (g)" required style="flex-grow: 1; min-width: 80px; margin-bottom: 0;" form="recipe-form">
                         <input type="text" name="grp_{{.ID}}" value="{{.GroupName}}" placeholder="グループ名" style="flex-grow: 2; min-width: 120px; margin-bottom: 0;" form="recipe-form">
                         <form action="/ingredients/remove/{{.ID}}" method="POST" style="margin:0;">
                             <button type="submit" class="outline secondary" style="padding: 2px 8px; font-size: 0.7rem; border:none; margin-bottom: 0;">✕</button>

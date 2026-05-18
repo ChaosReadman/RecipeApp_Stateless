@@ -44,6 +44,7 @@ go get github.com/mattn/go-sqlite3
 go get github.com/joho/godotenv
 go get golang.org/x/oauth2
 go get golang.org/x/oauth2/google
+go get google.golang.org/api/sheets/v4
 go mod tidy
 
 ### Google OAuth2 環境変数の設定

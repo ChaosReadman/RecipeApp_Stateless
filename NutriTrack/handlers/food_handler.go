@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"NutriTrack/models"
+	"NutriTrack/services"
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,16 +23,15 @@ import (
 )
 
 type FoodHandler struct {
-	DB          *sql.DB
 	Store       *session.Store
 	OAuthConfig *oauth2.Config
 }
 
 // Ingredient は材料リストのアイテム構造体です
 type Ingredient struct {
-	ID        string  `json:"id"`
+	ID        string  `json:"num_id"`
 	Name      string  `json:"name"`
-	Quantity  float64 `json:"quantity"`
+	Weight    float64 `json:"weight"`
 	GroupName string  `json:"group_name"`
 }
 
@@ -43,18 +42,31 @@ func (h *FoodHandler) Index(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
 
-	// レシピ検索結果と主要レシピ
-	recipes, err := models.SearchRecipes(h.DB, recipeQuery)
-	if err != nil {
-		return c.Status(500).SendString(err.Error())
+	recipes := []map[string]interface{}{}
+
+	// ログイン中であればスプレッドシートからレシピを取得
+	if rawToken := sess.Get("oauth_token"); rawToken != nil {
+		var token oauth2.Token
+		json.Unmarshal([]byte(rawToken.(string)), &token)
+		client := h.OAuthConfig.Client(context.Background(), &token)
+
+		spreadsheetId, err := services.GetOrCreateRecipeSpreadsheet(c.Context(), client)
+		if err == nil {
+			data, err := services.FetchRecipes(c.Context(), client, spreadsheetId, recipeQuery)
+			if err == nil {
+				recipes = data
+			}
+		}
 	}
 
-	// 【修正】検索クエリがある場合のみ食品を検索する（これで初期画面の MyIngredients が表示される）
-	var foods []models.Food
+	// 食品検索（Nutrient APIを使用）
+	var foods []map[string]interface{}
 	if query != "" {
-		foods, err = models.Search(h.DB, query)
-		if err != nil {
-			return c.Status(500).SendString(err.Error())
+		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+		resp, err := http.Get(apiUrl)
+		if err == nil {
+			defer resp.Body.Close()
+			json.NewDecoder(resp.Body).Decode(&foods)
 		}
 	}
 
@@ -76,13 +88,17 @@ func (h *FoodHandler) Detail(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
 
-	food, err := models.GetByID(h.DB, id)
-	if err != nil {
+	// Nutrient API から詳細情報を取得
+	apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", id)
+	resp, err := http.Get(apiUrl)
+	if err != nil || resp.StatusCode != 200 {
 		return c.Status(500).SendString(err.Error())
 	}
-	if food == nil {
-		return c.Status(404).SendString("食品が見つかりませんでした")
-	}
+	defer resp.Body.Close()
+
+	var results []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&results)
+	food := results[0]
 
 	return c.Render("detail", fiber.Map{
 		"Title":         "詳細情報",
@@ -119,9 +135,12 @@ func (h *FoodHandler) AddIngredient(c *fiber.Ctx) error {
 // SearchJSON は食品を検索し JSON 形式で返します
 func (h *FoodHandler) SearchJSON(c *fiber.Ctx) error {
 	query := c.Query("q")
-	foods, err := models.Search(h.DB, query)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	var foods []map[string]interface{}
+	apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+	resp, err := http.Get(apiUrl)
+	if err == nil {
+		defer resp.Body.Close()
+		json.NewDecoder(resp.Body).Decode(&foods)
 	}
 	return c.JSON(foods)
 }
@@ -129,15 +148,9 @@ func (h *FoodHandler) SearchJSON(c *fiber.Ctx) error {
 // SearchRecipesJSON はレシピを検索し JSON 形式で返します
 func (h *FoodHandler) SearchRecipesJSON(c *fiber.Ctx) error {
 	query := c.Query("q")
-	scope := c.Query("scope") // "my" or "all"
-	sess, _ := h.Store.Get(c)
-	userID := sess.Get("user_id").(int)
-
-	recipes, err := models.SearchRecipesScoped(h.DB, query, userID, scope)
-	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-	}
-	return c.JSON(recipes)
+	// スプレッドシート連携までモックを返す
+	log.Printf("Recipe search requested for: %s", query)
+	return c.JSON([]interface{}{})
 }
 
 // RemoveIngredient は材料リストからアイテムを削除します
@@ -187,51 +200,77 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 // CreateRecipe はレシピをデータベースに保存します
 func (h *FoodHandler) CreateRecipe(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
-	userID := sess.Get("user_id").(int)
+	userID, _ := sess.Get("user_id").(string)
+	print(userID)
+	rawToken := sess.Get("oauth_token")
+
+	if rawToken == nil {
+		return c.Status(401).SendString("認証が必要です")
+	}
 
 	title := c.FormValue("title")
 	description := c.FormValue("description")
 
-	tx, err := h.DB.Begin()
-	if err != nil {
-		return c.Status(500).SendString(err.Error())
+	// 調理手順の取得
+	stepsRaw := c.Request().PostArgs().PeekMulti("steps")
+	steps := make([]string, len(stepsRaw))
+	for i, s := range stepsRaw {
+		steps[i] = string(s)
 	}
 
-	res, err := tx.Exec("INSERT INTO recipes (user_id, title, description) VALUES (?, ?, ?)", userID, title, description)
-	if err != nil {
-		tx.Rollback()
-		return c.Status(500).SendString(err.Error())
-	}
-	recipeID, _ := res.LastInsertId()
-
-	// 材料の保存 (フォームから送信された ingredient_ids を元に処理)
+	// 材料の詳細（IDと最新の重量）をフォームから取得
 	ingIDs := c.Request().PostArgs().PeekMulti("ingredient_ids")
+	var ingredientList []map[string]interface{}
+
+	// セッションから名前等を取得するためのマップ
+	sessionIngs := h.getIngredientsFromSession(c)
+	ingMap := make(map[string]Ingredient)
+	for _, v := range sessionIngs {
+		ingMap[v.ID] = v
+	}
+
 	for _, idByte := range ingIDs {
 		id := string(idByte)
-		qty := c.FormValue("qty_" + id)
-		grp := c.FormValue("grp_" + id)
-
-		if _, err := tx.Exec("INSERT INTO recipe_ingredients (recipe_id, food_id, quantity, group_name) VALUES (?, ?, ?, ?)", recipeID, id, qty, grp); err != nil {
-			tx.Rollback()
-			return c.Status(500).SendString("材料の保存に失敗しました: " + err.Error())
+		weight, _ := strconv.ParseFloat(c.FormValue("qty_"+id), 64)
+		group := c.FormValue("grp_" + id)
+		name := id
+		if val, ok := ingMap[id]; ok {
+			name = val.Name
 		}
+
+		ingredientList = append(ingredientList, map[string]interface{}{
+			"ID":     id,
+			"Name":   name,
+			"Weight": weight,
+			"Group":  group,
+		})
 	}
 
-	// 工程の保存 (複数値の取得)
-	steps := c.Request().PostArgs().PeekMulti("steps")
-	for i, stepByte := range steps {
-		if _, err := tx.Exec("INSERT INTO recipe_steps (recipe_id, step_number, instruction) VALUES (?, ?, ?)", recipeID, i+1, string(stepByte)); err != nil {
-			tx.Rollback()
-			return c.Status(500).SendString("工程の保存に失敗しました: " + err.Error())
-		}
+	// OAuth2 クライアントの作成
+	var token oauth2.Token
+	json.Unmarshal([]byte(rawToken.(string)), &token)
+	client := h.OAuthConfig.Client(context.Background(), &token)
+
+	// ユーザー固有のスプレッドシートを検索または作成
+	spreadsheetId, err := services.GetOrCreateRecipeSpreadsheet(c.Context(), client)
+	if err != nil {
+		log.Printf("GetOrCreateRecipeSpreadsheet Error: %v", err)
+		return c.Status(500).SendString(fmt.Sprintf("レシピ用スプレッドシートの準備に失敗しました: %v", err))
 	}
 
-	tx.Commit()
+	// タイムスタンプをコンテキストに含めて渡す
+	ctx := context.WithValue(context.Background(), "timestamp", time.Now().Format("2006-01-02 15:04:05"))
+
+	// シートごとに1レシピを保存 (シート名 = レシピ名称)
+	err = services.CreateRecipeSheet(ctx, client, spreadsheetId, title, description, ingredientList, steps)
+	if err != nil {
+		log.Printf("CreateRecipeSheet Error: %v", err)
+		return c.Status(500).SendString("スプレッドシートへの保存に失敗しました: " + err.Error())
+	}
 
 	// セッションの材料リストをクリア
 	sess.Delete("ingredients")
 	sess.Save()
-
 	return c.Redirect("/")
 }
 
@@ -241,19 +280,14 @@ func (h *FoodHandler) RecipeDetail(c *fiber.Ctx) error {
 	log.Printf("DEBUG: RecipeDetail called with ID: %s", id)
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
+	userID, _ := sess.Get("user_id").(string)
 	ingredients := h.getIngredientsFromSession(c)
 
-	recipe, err := models.GetRecipeByID(h.DB, id)
-	if err != nil {
-		log.Println("RecipeDetail Error:", err)
-		return c.Status(500).SendString("レシピの取得に失敗しました")
-	}
-	if recipe == nil {
-		return c.Status(404).SendString("レシピが見つかりませんでした")
-	}
+	// TODO: スプレッドシートからレシピを取得
+	recipe := &models.RecipeFull{Title: "Coming Soon (Sheets Sync)"}
 
 	isOwner := false
-	if userID := sess.Get("user_id"); userID != nil && userID.(int) == recipe.UserID {
+	if userID != "" && userID == recipe.UserID {
 		isOwner = true
 	}
 
@@ -274,24 +308,18 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 	query := c.Query("q")
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
-	userID := sess.Get("user_id").(int)
+	userID, _ := sess.Get("user_id").(string)
 
-	recipe, err := models.GetRecipeByID(h.DB, id)
-	if err != nil || recipe == nil {
-		return c.Status(404).SendString("レシピが見つかりません")
-	}
-
-	if recipe.UserID != userID {
-		return c.Status(403).SendString("編集権限がありません")
-	}
+	// TODO: スプレッドシートからレシピを取得
+	recipe := &models.RecipeFull{UserID: userID}
 
 	// 検索クエリがある場合は食品を検索
-	var foods []models.Food
+	var foods []map[string]interface{}
 	if query != "" {
-		foods, err = models.Search(h.DB, query)
-		if err != nil {
-			log.Println("Food search error in edit:", err)
-		}
+		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+		resp, _ := http.Get(apiUrl)
+		defer resp.Body.Close()
+		json.NewDecoder(resp.Body).Decode(&foods)
 	}
 
 	// セッションが空の場合、検索の有無に関わらずDBから材料をロードする
@@ -302,7 +330,7 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 			ingredients = append(ingredients, Ingredient{
 				ID:        ing.FoodID,
 				Name:      ing.Name,
-				Quantity:  ing.Quantity,
+				Weight:    ing.Quantity,
 				GroupName: ing.GroupName,
 			})
 		}
@@ -328,63 +356,10 @@ func (h *FoodHandler) UpdateRecipe(c *fiber.Ctx) error {
 	id := c.Params("id")
 	log.Printf("DEBUG: UpdateRecipe called with ID: %s", id)
 	sess, _ := h.Store.Get(c)
-	userID := sess.Get("user_id").(int)
+	userID, _ := sess.Get("user_id").(string)
 
-	recipe, err := models.GetRecipeByID(h.DB, id)
-	if err != nil || recipe == nil {
-		return c.Status(404).SendString("レシピが見つかりません")
-	}
-
-	if recipe.UserID != userID {
-		return c.Status(403).SendString("編集権限がありません")
-	}
-
-	tx, err := h.DB.Begin()
-	if err != nil {
-		return c.Status(500).SendString(err.Error())
-	}
-
-	// 基本情報の更新
-	_, err = tx.Exec("UPDATE recipes SET title = ?, description = ? WHERE id = ?", c.FormValue("title"), c.FormValue("description"), id)
-	if err != nil {
-		tx.Rollback()
-		return c.Status(500).SendString(err.Error())
-	}
-
-	// 材料と工程は一度削除して再登録するのが最も確実
-	if _, err := tx.Exec("DELETE FROM recipe_ingredients WHERE recipe_id = ?", id); err != nil {
-		tx.Rollback()
-		return c.Status(500).SendString(err.Error())
-	}
-	if _, err := tx.Exec("DELETE FROM recipe_steps WHERE recipe_id = ?", id); err != nil {
-		tx.Rollback()
-		return c.Status(500).SendString(err.Error())
-	}
-
-	// 材料の再保存
-	ingIDs := c.Request().PostArgs().PeekMulti("ingredient_ids")
-	for _, idByte := range ingIDs {
-		ingID := string(idByte)
-		qty := c.FormValue("qty_" + ingID)
-		grp := c.FormValue("grp_" + ingID)
-		if _, err := tx.Exec("INSERT INTO recipe_ingredients (recipe_id, food_id, quantity, group_name) VALUES (?, ?, ?, ?)", id, ingID, qty, grp); err != nil {
-			tx.Rollback()
-			return c.Status(500).SendString("材料の更新に失敗しました")
-		}
-	}
-
-	// 工程の再保存
-	steps := c.Request().PostArgs().PeekMulti("steps")
-	for i, stepByte := range steps {
-		if _, err := tx.Exec("INSERT INTO recipe_steps (recipe_id, step_number, instruction) VALUES (?, ?, ?)", id, i+1, string(stepByte)); err != nil {
-			tx.Rollback()
-			return c.Status(500).SendString("工程の更新に失敗しました")
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return c.Status(500).SendString(err.Error())
-	}
+	// TODO: スプレッドシート側のデータを更新
+	log.Printf("UpdateRecipe (WIP): User %s updated recipe %s", userID, id)
 
 	// セッションの材料リストをクリア
 	sess.Delete("ingredients")
@@ -421,14 +396,7 @@ func (h *FoodHandler) getIngredientsFromSession(c *fiber.Ctx) []Ingredient {
 
 // getMyIngredients はユーザーの履歴またはデフォルトの材料を取得します
 func (h *FoodHandler) getMyIngredients(c *fiber.Ctx) []models.Food {
-	sess, _ := h.Store.Get(c)
-	userID := sess.Get("user_id")
-
 	var myIngredients []models.Food
-	if userID != nil {
-		myIngredients, _ = models.GetUserRecipeIngredients(h.DB, userID.(int))
-	}
-
 	if len(myIngredients) == 0 {
 		data, err := os.ReadFile("./data/default_ingredients.json")
 		if err == nil {
@@ -444,10 +412,11 @@ func (h *FoodHandler) getMyIngredients(c *fiber.Ctx) []models.Food {
 func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
-	userID, ok := sess.Get("user_id").(int)
+	userID, ok := sess.Get("user_id").(string)
 	if !ok {
 		return c.Redirect("/login")
 	}
+	print(userID)
 
 	// 日付の取得（クエリになければ今日）
 	dateStr := c.Query("date")
@@ -455,17 +424,15 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 		dateStr = time.Now().Format("2006-01-02")
 	}
 
-	entries, err := models.GetCalendarEntries(h.DB, userID, dateStr)
-	if err != nil {
-		return c.Status(500).SendString(err.Error())
-	}
+	// TODO: スプレッドシートからカレンダー情報を取得
+	entries := []models.CalendarEntryDetail{}
+	totalCalories := 0.0
+	externalCalories := 0
+	log.Printf("CalendarIndex (WIP): Fetching for %s", dateStr)
 
-	totalCalories, externalCalories, err := models.GetDailyCalories(h.DB, userID, dateStr)
-	if err != nil {
-		log.Println("Calorie calculation error:", err)
-	}
-
-	steps, burned, healthSynced := models.GetDailyHealthData(h.DB, userID, dateStr)
+	// TODO: スプレッドシートまたはFitから取得
+	steps, burned, healthSynced := 0, 0, false
+	// steps, burned, healthSynced := models.GetDailyHealthData(h.DB, userID, dateStr)
 
 	return c.Render("calendar", fiber.Map{
 		"Title":                "食事カレンダー",
@@ -485,7 +452,7 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 // AddToCalendar はレシピをカレンダーに登録します
 func (h *FoodHandler) AddToCalendar(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
-	userID, ok := sess.Get("user_id").(int)
+	userID, ok := sess.Get("user_id").(string)
 	if !ok {
 		return c.Redirect("/login")
 	}
@@ -502,28 +469,13 @@ func (h *FoodHandler) AddToCalendar(c *fiber.Ctx) error {
 	// 複数の recipe_ids を取得
 	recipeIDs := c.Request().PostArgs().PeekMulti("recipe_ids")
 
-	tx, err := h.DB.Begin()
-	if err != nil {
-		return c.Status(500).SendString(err.Error())
-	}
-
-	// 【Delete-Insert】指定された食事区分のデータを一度削除
-	_, _ = tx.Exec("DELETE FROM calendar_entries WHERE user_id = ? AND entry_date = ? AND meal_type = ?", userID, date, mealType)
-
+	// TODO: スプレッドシートへの保存ロジック
 	for _, idByte := range recipeIDs {
 		recipeID := string(idByte)
-		_, err := tx.Exec("INSERT INTO calendar_entries (user_id, recipe_id, entry_date, entry_time, meal_type, is_synced) VALUES (?, ?, ?, ?, ?, 0)",
-			userID, recipeID, date, entryTime, mealType)
-		if err != nil {
-			tx.Rollback()
-			log.Println("Calendar insert error:", err)
-			return c.Status(500).SendString("登録中にエラーが発生しました")
-		}
+		log.Printf("AddToCalendar (WIP): User %s added recipe %s for %s", userID, recipeID, mealType)
 	}
 
-	tx.Commit()
-	// 健康データの同期フラグも落としておく
-	_, _ = h.DB.Exec("UPDATE daily_health_data SET is_synced = 0 WHERE user_id = ? AND date = ?", userID, date)
+	// 健康データの同期フラグのリセットもスプレッドシート等で管理予定
 
 	return c.Redirect("/calendar?date=" + date)
 }
@@ -532,25 +484,21 @@ func (h *FoodHandler) AddToCalendar(c *fiber.Ctx) error {
 func (h *FoodHandler) RemoveFromCalendar(c *fiber.Ctx) error {
 	id := c.Params("id")
 	sess, _ := h.Store.Get(c)
-	userID, ok := sess.Get("user_id").(int)
+	userID, ok := sess.Get("user_id").(string)
 	if !ok {
 		return c.Redirect("/login")
 	}
 
 	// 日付を取得しておく（リダイレクトと同期フラグ更新用）
 	var date string
-	err := h.DB.QueryRow("SELECT DATE(entry_date) FROM calendar_entries WHERE id = ? AND user_id = ?", id, userID).Scan(&date)
-	if err != nil {
-		return c.Redirect("/calendar")
+	// TODO: スプレッドシートから対象のエントリを削除
+	log.Printf("RemoveFromCalendar (WIP): User %s removed entry %s", userID, id)
+
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
 	}
 
-	// 削除実行
-	_, _ = h.DB.Exec("DELETE FROM calendar_entries WHERE id = ? AND user_id = ?", id, userID)
-
-	// 健康データの同期フラグを落とす（内容に変更があったため、再同期を促す）
-	_, _ = h.DB.Exec("UPDATE daily_health_data SET is_synced = 0 WHERE user_id = ? AND date = ?", userID, date)
-
-	return c.Redirect("/calendar?date=" + date) // 削除後も同じ日付のカレンダーを表示
+	return c.Redirect("/calendar?date=" + date)
 }
 
 // syncNutritionToFit はレシピの栄養素を Google Fit に書き込みます
@@ -563,7 +511,7 @@ func (h *FoodHandler) syncNutritionToFit(
 	mealType int,
 ) {
 	sess, _ := h.Store.Get(c)
-	userID := sess.Get("user_id").(int)
+	userID, _ := sess.Get("user_id").(string)
 	rawToken := sess.Get("oauth_token")
 	var token oauth2.Token
 	_ = json.Unmarshal([]byte(rawToken.(string)), &token)
@@ -662,13 +610,9 @@ func (h *FoodHandler) syncNutritionToFit(
 }
 
 // getOrCreateFitDataSource はユーザーの Google Fit データソースIDを取得または作成します
-func (h *FoodHandler) getOrCreateFitDataSource(userID int, token oauth2.Token) (string, error) {
-	// データベースからデータソースIDを検索
-	user, err := models.GetUserByID(h.DB, userID)
-	if err == nil && user != nil && user.FitDataSourceID != "" {
-		return user.FitDataSourceID, nil // 既存のIDがあればそれを使用
-	}
-	// If not found, proceed to create
+func (h *FoodHandler) getOrCreateFitDataSource(userID string, token oauth2.Token) (string, error) {
+	// 注意: 本来はスプレッドシート等から取得するロジックに置き換える必要があります
+	// 現在は常に新規作成を試みるか、あるいはFit側での重複チェックに任せる形になります
 
 	// なければ新規作成
 	client := h.OAuthConfig.Client(context.Background(), &token)
@@ -712,11 +656,8 @@ func (h *FoodHandler) getOrCreateFitDataSource(userID int, token oauth2.Token) (
 		return "", fmt.Errorf("failed to parse data source creation response: %w", err)
 	}
 
-	// 取得したデータソースIDをDBに保存 (usersテーブルのfit_data_source_idカラムを更新)
-	_, err = h.DB.Exec("UPDATE users SET fit_data_source_id = ? WHERE id = ?", result.DataSourceID, userID)
-	if err != nil {
-		log.Printf("Failed to save Fit data source ID for user %d: %v", userID, err)
-	}
+	// スプレッドシート等にデータソースIDを永続化するロジックを将来的に追加
+	log.Printf("Fit data source created: %s for user %s", result.DataSourceID, userID)
 
 	return result.DataSourceID, nil
 }
@@ -758,7 +699,7 @@ func (h *FoodHandler) SyncHealthData(c *fiber.Ctx) error {
 	if rawToken == nil {
 		return c.Status(401).SendString("OAuthトークンが見つかりません。再ログインしてください。")
 	}
-	userID := sess.Get("user_id").(int)
+	userID, _ := sess.Get("user_id").(string)
 
 	// 1. 準備：同期対象の日付とタイムゾーンの設定
 	dateStr := c.Query("date")
@@ -792,28 +733,22 @@ func (h *FoodHandler) SyncHealthData(c *fiber.Ctx) error {
 	}
 	expectedMeals := []mealExpectation{}
 	for _, mt := range []string{"breakfast", "lunch", "dinner", "snack"} {
-		nut, _ := models.GetMealTypeNutrition(h.DB, userID, cleanDate, mt)
-		if nut != nil && nut.TotalCalories > 0 {
-			sTime, err := time.ParseInLocation("2006-01-02 15:04", cleanDate+" "+nut.EntryTime, jst)
-			if err != nil {
-				// DBからの時刻取得・解析に失敗した場合のフォールバック
-				hour := 15
-				switch mt {
-				case "breakfast":
-					hour = 8
-				case "lunch":
-					hour = 12
-				case "dinner":
-					hour = 18
-				}
-				sTime = time.Date(t.Year(), t.Month(), t.Day(), hour, 0, 0, 0, jst)
-			}
-			expectedMeals = append(expectedMeals, mealExpectation{
-				mealTypeStr: mt,
-				calories:    nut.TotalCalories,
-				startTimeNs: sTime.UnixNano(),
-			})
-		}
+		// TODO: スプレッドシートから栄養素情報を取得するように変更
+		log.Printf("SyncHealthData (WIP): Checking nutrition for %s", mt)
+		// nut, _ := models.GetMealTypeNutrition(h.DB, userID, cleanDate, mt)
+		// if nut != nil && nut.TotalCalories > 0 {
+		// 	sTime, err := time.ParseInLocation("2006-01-02 15:04", cleanDate+" "+nut.EntryTime, jst)
+		// 	if err != nil {
+		// 		hour := 15
+		// 		switch mt {
+		// 		case "breakfast": hour = 8
+		// 		case "lunch": hour = 12
+		// 		case "dinner": hour = 18
+		// 		}
+		// 		sTime = time.Date(t.Year(), t.Month(), t.Day(), hour, 0, 0, 0, jst)
+		// 	}
+		// 	expectedMeals = append(expectedMeals, mealExpectation{ ... })
+		// }
 	}
 
 	// 2. 受信 (Pull) & 外部データ特定
@@ -931,42 +866,19 @@ func (h *FoodHandler) SyncHealthData(c *fiber.Ctx) error {
 	}
 
 	// 取得した活動データをDBに保存
-	_, _ = h.DB.Exec(`INSERT INTO daily_health_data (user_id, date, steps, burned_calories, external_intake_calories, is_synced) 
-		VALUES (?, ?, ?, ?, ?, 1) 
-		ON CONFLICT(user_id, date) DO UPDATE SET steps=excluded.steps, burned_calories=excluded.burned_calories, external_intake_calories=excluded.external_intake_calories, is_synced=1`,
-		userID, cleanDate, steps, int(calories), int(externalCalories))
+	log.Printf("Fit Activity Pull: %d steps, %d kcal burned", steps, int(calories))
 
 	// 3. 送信 (Push)：Fit に存在しなかった差分のみを送信
 	for _, exp := range expectedMeals {
 		if !exp.foundInFit {
 			log.Printf("DEBUG: Sync target found - %s (%.2f kcal)", exp.mealTypeStr, exp.calories)
-			nutrition, _ := models.GetMealTypeNutrition(h.DB, userID, cleanDate, exp.mealTypeStr)
-			fitMT := 4
-			switch exp.mealTypeStr {
-			case "breakfast":
-				fitMT = 1
-			case "lunch":
-				fitMT = 2
-			case "dinner":
-				fitMT = 3
-			}
 
 			// その食事区分の全レシピタイトルを取得して連結 (例: "トースト２枚, 目玉焼き")
-			var titles []string
-			tRows, _ := h.DB.Query("SELECT r.title FROM calendar_entries ce JOIN recipes r ON ce.recipe_id = r.id WHERE ce.user_id = ? AND date(ce.entry_date) = ? AND ce.meal_type = ?", userID, cleanDate, exp.mealTypeStr)
-			for tRows.Next() {
-				var tTitle string
-				tRows.Scan(&tTitle)
-				titles = append(titles, tTitle)
-			}
-			tRows.Close()
+			var titles []string // TODO: スプレッドシートから取得
 			combinedTitle := strings.Join(titles, ", ")
 			if combinedTitle == "" {
 				combinedTitle = exp.mealTypeStr
 			}
-
-			h.syncNutritionToFit(c, combinedTitle, nutrition.TotalCalories, nutrition.TotalProtein, nutrition.TotalFat, nutrition.TotalCarbs, cleanDate, nutrition.EntryTime, fitMT)
-			_, _ = h.DB.Exec("UPDATE calendar_entries SET is_synced = 1 WHERE user_id = ? AND date(entry_date) = ? AND meal_type = ?", userID, cleanDate, exp.mealTypeStr)
 		}
 	}
 

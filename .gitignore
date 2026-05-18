@@ -9,3 +9,5 @@ tmp/
 # Go ビルドバイナリ
 main
 **/main
+
+__debug_**

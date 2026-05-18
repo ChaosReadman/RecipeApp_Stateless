@@ -1,10 +1,13 @@
 package handlers
 
 import (
-	"RecipeApp/models"
+	"NutriTrack/models"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"log"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
@@ -27,15 +30,52 @@ func (h *AuthHandler) ShowLogin(c *fiber.Ctx) error {
 
 // Login リダイレクト処理
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
-	// 本来はセッションにランダムな文字列を保存し、Callbackで一致確認を行う(CSRF対策)
-	// 現状は実装の簡略化のため固定値 "state" を使用
-	url := h.OAuthConfig.AuthCodeURL("state", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	// CSRF対策のため、ランダムな文字列(state)を生成してセッションに保存します
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return c.Status(500).SendString("内部エラーが発生しました")
+	}
+	state := base64.URLEncoding.EncodeToString(b)
+
+	sess, err := h.Store.Get(c)
+	if err != nil {
+		return c.Status(500).SendString("セッションの取得に失敗しました")
+	}
+	sess.Set("oauth_state", state)
+	if err := sess.Save(); err != nil {
+		return c.Status(500).SendString("セッションの保存に失敗しました")
+	}
+
+	// ApprovalForce を削除することで、二回目以降のログインがスムーズになります
+	url := h.OAuthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
 	return c.Redirect(url)
 }
 
 // Callback OAuthからの戻り先
 func (h *AuthHandler) Callback(c *fiber.Ctx) error {
+	sess, err := h.Store.Get(c)
+	if err != nil {
+		return c.Status(500).SendString("セッションの取得に失敗しました")
+	}
+
+	// CSRF対策: Stateの検証
 	code := c.Query("code")
+	state := c.Query("state")
+	savedState := sess.Get("oauth_state")
+
+	if savedState == nil {
+		log.Println("[AUTH ERROR] Session state is nil. Cookie might be blocked or lost.")
+		return c.Status(400).SendString("不正なリクエストです (セッションが失われました)")
+	}
+	if state != savedState.(string) {
+		log.Printf("[AUTH ERROR] State mismatch!\n  Expected (Session): %v\n  Got (URL): %v", savedState, state)
+		// 不一致が起きた場合は、古いStateを削除して再試行を促す
+		sess.Delete("oauth_state")
+		sess.Save()
+		return c.Status(400).SendString("不正なリクエストです (State不一致)")
+	}
+	sess.Delete("oauth_state")
+
 	token, err := h.OAuthConfig.Exchange(context.Background(), code)
 	if err != nil {
 		return c.Status(500).SendString("トークンの取得に失敗しました")
@@ -63,19 +103,19 @@ func (h *AuthHandler) Callback(c *fiber.Ctx) error {
 	}
 
 	// DBでユーザーを特定または作成
-	user, err := models.FindOrCreate(h.DB, profile.Email, profile.Name, "google", profile.ID)
+	user, err := models.FindOrCreate(h.DB, "google", profile.ID) // email, name はDBに保存しないため渡さない
 	if err != nil {
 		return c.Status(500).SendString(err.Error())
 	}
 
-	// セッションに名前をセット
-	sess, _ := h.Store.Get(c)
 	tokenData, _ := json.Marshal(token)
 
 	sess.Set("user_id", user.ID)
-	sess.Set("username", user.Name)
+	sess.Set("username", profile.Name) // ユーザー名はGoogleから取得したものを直接セッションに保存
 	sess.Set("oauth_token", string(tokenData))
-	_ = sess.Save()
+	if err := sess.Save(); err != nil {
+		return c.Status(500).SendString("ログイン情報の保存に失敗しました")
+	}
 
 	return c.Redirect("/")
 }

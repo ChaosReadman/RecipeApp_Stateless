@@ -1,14 +1,16 @@
-module nutri-track
+module NutriTrack
 
-go 1.23.0
+go 1.25.0
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.2
 	github.com/gofiber/template/html/v2 v2.1.1
+	github.com/mattn/go-sqlite3 v1.14.44
 	golang.org/x/oauth2 v0.36.0
 )
 
 require (
+	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	github.com/andybalholm/brotli v1.0.5 // indirect
 	github.com/gofiber/template v1.8.3 // indirect
 	github.com/gofiber/utils v1.1.0 // indirect

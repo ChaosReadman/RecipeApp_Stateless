@@ -1,18 +1,25 @@
 package main
 
 import (
+	"NutriTrack/handlers"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/gofiber/template/html/v2"
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 // 全データをそのまま保持する型定義 (APIのレスポンス形式)
@@ -70,19 +77,85 @@ func getIngredients() []FoodMap {
 }
 
 func main() {
+	// 1. データベースの初期化
+	db, err := sql.Open("sqlite3", "./nutritrack.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	// データベースのテーブル初期化
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, 
+		-- email TEXT UNIQUE, -- プロフィール情報はDBに保存しない
+		-- name TEXT,         -- プロフィール情報はDBに保存しない
+		provider TEXT,
+		external_id TEXT,
+		fit_data_source_id TEXT
+	)`)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	// 2. セッションストアの初期化
+	store := session.New(session.Config{
+		Expiration:     24 * time.Hour,
+		CookieHTTPOnly: true,
+		CookieSecure:   false, // HTTPでのローカル開発時はfalseにする
+		CookieSameSite: "Lax",
+	})
+
+	// 3. Google OAuth2の設定
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+
+	if clientID == "" || clientSecret == "" {
+		log.Fatal("環境変数 GOOGLE_CLIENT_ID と GOOGLE_CLIENT_SECRET を設定してください")
+	}
+
+	conf := &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  "http://127.0.0.1:3000/auth/callback", // ここが Console の設定と完全一致している必要があります
+		Scopes: []string{
+			"https://www.googleapis.com/auth/userinfo.email",
+			"https://www.googleapis.com/auth/userinfo.profile",
+			"https://www.googleapis.com/auth/spreadsheets", // スプレッドシート操作権限
+		},
+		Endpoint: google.Endpoint,
+	}
+
+	// 4. ハンドラの初期化
+	authHandler := &handlers.AuthHandler{
+		DB:          db,
+		Store:       store,
+		OAuthConfig: conf,
+	}
+
+	foodHandler := &handlers.FoodHandler{
+		DB:          db,
+		Store:       store,
+		OAuthConfig: conf,
+	}
+
 	// テンプレートエンジンの初期化
 	engine := html.New("./views", ".html")
+	engine.Reload(true) // 開発用
 
 	app := fiber.New(fiber.Config{
 		Views:     engine,
 		Immutable: true,
 	})
+	app.Static("/", "./public")
 
 	// メイン画面（検索ロジック）
 	app.Get("/", func(c *fiber.Ctx) error {
 		query := c.Query("q")
 		recipeQuery := c.Query("rq")
 		var foods []FoodMap
+
+		// セッションからログインユーザー名を取得
+		sess, _ := store.Get(c)
+		userName := sess.Get("username")
 
 		ingredients := getIngredients()
 		summary := NutrientSummary{}
@@ -190,9 +263,17 @@ func main() {
 			"Ingredients":   ingredients,
 			"Summary":       summary,
 			"MyIngredients": myIngredients,
+			"User":          userName,
 		})
 	})
 
+	// --- 認証ルート ---
+	app.Get("/login", authHandler.ShowLogin)
+	app.Get("/auth/login", authHandler.Login)
+	app.Get("/auth/callback", authHandler.Callback)
+	app.Get("/logout", authHandler.Logout)
+
+	// --- 食材・レシピ関連ルート (foodHandlerの例) ---
 	// 食材をリストに追加
 	app.Post("/ingredients/add", func(c *fiber.Ctx) error {
 		id := c.FormValue("id")
@@ -289,14 +370,12 @@ func main() {
 		return c.Redirect("/")
 	})
 
-	// 食品詳細画面（仮）
-	app.Get("/food/:id", func(c *fiber.Ctx) error {
-		return c.SendString(fmt.Sprintf("食品ID: %s の詳細画面（未実装）", c.Params("id")))
-	})
-
-	// 静的ファイルの配信設定（ルート定義の後に配置）
-	app.Static("/", "./public")
+	// 詳細画面などは foodHandler に委譲可能
+	app.Get("/food/:id", foodHandler.Detail)
+	app.Get("/calendar", foodHandler.CalendarIndex)
 
 	// 127.0.0.1:3000 で起動（APIの8080と分ける）
-	log.Fatal(app.Listen("127.0.0.1:3000"))
+	port := "3000"
+	fmt.Printf("Server started on http://127.0.0.1:%s\n", port)
+	log.Fatal(app.Listen(":" + port))
 }

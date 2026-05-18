@@ -45,6 +45,16 @@ go get github.com/joho/godotenv
 go get golang.org/x/oauth2
 go get golang.org/x/oauth2/google
 go mod tidy
+
+### Google OAuth2 環境変数の設定
+Googleログイン機能を有効にするには、Google Cloud Console で取得したクライアントIDとクライアントシークレットを環境変数として設定する必要があります。
+`.env` ファイルを作成し、以下の形式で記述してください。
+
+```
+GOOGLE_CLIENT_ID="あなたのGoogleクライアントID"
+GOOGLE_CLIENT_SECRET="あなたのGoogleクライアントシークレット"
+```
+`main.go` は `godotenv` を使用してこれらの環境変数を読み込みます。
 ```
 
 # ホットリロードツール (Air) のインストール
@@ -62,3 +72,14 @@ source ~/.zprofile
 ```bash
 air
 ```
+
+## 5. デバッグ方法 (VS Code)
+
+本プロジェクトには VS Code 用の `launch.json` が構成されており、バックエンド（Nutrient API）とメインアプリ（NutriTrack）を同時に起動してデバッグできる **"Full Stack Debug"** モードが用意されています。
+
+1. VS Code の **[実行とデバッグ]** ビュー（`Ctrl+Shift+D`）を開きます。
+2. プロファイル選択メニューから **「Full Stack Debug」** を選択します。
+3. **F5** キーを押してデバッグを開始します。
+
+これにより、API（ポート 8080）と Webアプリ（ポート 3000）の両方のプロセスに対して同時にブレークポイントを設定し、ステップ実行を行うことが可能です。
+

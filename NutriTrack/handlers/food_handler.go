@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"RecipeApp/models"
+	"NutriTrack/models"
 	"bytes"
 	"context"
 	"database/sql"
@@ -675,14 +675,14 @@ func (h *FoodHandler) getOrCreateFitDataSource(userID int, token oauth2.Token) (
 
 	// データソース作成リクエストボディ
 	createSourceBody := map[string]interface{}{
-		"dataStreamName": "RecipeApp Nutrition Data",
+		"dataStreamName": "NutriTrack Nutrition Data",
 		"type":           "raw",
 		"dataType": map[string]string{
 			"name": "com.google.nutrition",
 		},
 		"application": map[string]string{
 			"detailsUrl": os.Getenv("APP_BASE_URL"), // 環境変数から取得
-			"name":       "RecipeApp",
+			"name":       "NutriTrack",
 			"version":    "1.0",
 		},
 		// "device": map[string]string{ // Google Fit API の device.type に "platform" は無効なため削除

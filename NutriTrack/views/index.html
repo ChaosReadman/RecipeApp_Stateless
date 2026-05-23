@@ -7,14 +7,6 @@
 <header>
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <h1>レシピ一覧</h1>
-        <div>
-            {{if .User}}
-                <span style="margin-right: 15px;">ようこそ、<strong>{{.User}}</strong> さん</span>
-                <a href="/logout" role="button" class="outline secondary" style="font-size: 0.8rem;">ログアウト</a>
-            {{else}}
-                <a href="/auth/login" role="button" class="contrast" style="font-size: 0.8rem;">Googleでログイン</a>
-            {{end}}
-        </div>
     </div>
 </header>
 
@@ -117,13 +109,14 @@
                     </li>
                     {{end}}
                 </ul>
-                {{if .User}}
-                    <a href="/recipe/new" role="button" class="contrast" style="width: 100%;">この材料でレシピ作成</a>
-                {{end}}
+
             {{else}}
                 <p><small>リストは空です。食品を検索して追加してください。</small></p>
             {{end}}
-            
+               <!-- 常時表示される「レシピ作成」ボタン -->
+            {{if .User}}
+                <a href="/recipe/new" role="button" class="contrast" style="width: 100%;">レシピ作成</a>
+            {{end}}
             <hr>
             <footer>
                 <strong>よく使う材料</strong>

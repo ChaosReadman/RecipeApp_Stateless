@@ -8,14 +8,6 @@
         <span>消費: <strong>{{.BurnedCalories}}</strong> kcal</span>
         <span>歩数: <strong>{{.Steps}}</strong> 歩</span>
     </div>
-    <div style="display: flex; align-items: center; gap: 15px;">
-    {{$unsynced := false}}
-    {{range .Entries}}{{if not .IsSynced}}{{$unsynced = true}}{{end}}{{end}}
-    {{if or $unsynced (not .HealthSynced)}}
-        <span style="color: #d81b60; font-size: 0.8rem;">⚠️ 未同期の食事があります</span>
-    {{end}}
-    <a href="/api/health/sync?date={{.Date}}" role="button" class="contrast">🔄 Google Fit と同期する</a>
-    </div>
 </div>
 
 <div class="grid">

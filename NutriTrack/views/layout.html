@@ -41,6 +41,24 @@
     </style>
 </head>
 <body>
+    <header class="container">
+        <nav>
+            <ul>
+                <li><a href="/ingredients/clear" class="contrast"><strong>NutriTrack</strong></a></li>
+            </ul>
+            <ul>
+                <li><a href="/" class="secondary">Top</a></li>
+                {{if .User}}
+                <li><a href="/calendar" class="secondary">食事の記録</a></li>
+                <span style="margin-right: 15px;">ようこそ、<strong>{{.User}}</strong> さん</span>
+                <a href="/logout" role="button" class="outline secondary" style="font-size: 0.8rem;">ログアウト</a>
+                {{else}}
+                <a href="/auth/login" role="button" class="contrast" style="font-size: 0.8rem;">Googleでログイン</a>
+                {{end}}
+                
+            </ul>
+        </nav>
+    </header>
     <main class="container">
         {{embed}}
     </main>

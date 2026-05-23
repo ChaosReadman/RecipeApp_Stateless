@@ -1,6 +1,6 @@
 <nav aria-label="breadcrumb">
     <ul>
-        <li><a href="/">トップ</a></li>
+        <li><a href="/ingredients/clear">トップ</a></li>
         {{if .Recipe.ID}}
         <li><a href="/recipe/{{.Recipe.ID}}">レシピ詳細</a></li>
         {{end}}
@@ -103,7 +103,7 @@
             <div style="margin-top: 2rem; display: flex; gap: 10px;">
                 <button type="submit" form="recipe-form" formaction="/recipe/create" style="margin-bottom: 0;">新しくレシピを保存</button>
                 <button type="submit" form="recipe-form" formaction="/recipe/{{.Recipe.ID}}/update" style="margin-bottom: 0;" {{if not .Recipe.ID}}disabled{{end}}>レシピを上書き保存</button>
-                <a href="{{if .Recipe.ID}}/recipe/{{.Recipe.ID}}{{else}}/{{end}}" role="button" class="outline secondary" style="margin-bottom: 0;">キャンセル</a>
+                <a href="/ingredients/clear" role="button" class="outline secondary" style="margin-bottom: 0;">キャンセル</a>
             </div>
         </div>
 

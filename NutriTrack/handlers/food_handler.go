@@ -97,7 +97,7 @@ func (h *FoodHandler) Index(c *fiber.Ctx) error {
 		"Ingredients":   h.getIngredientsFromSession(c),
 		"MyIngredients": h.getMyIngredients(c),
 		"Recipes":       recipes,
-	})
+	}, "layout")
 }
 
 // Detail は詳細を表示します
@@ -124,7 +124,7 @@ func (h *FoodHandler) Detail(c *fiber.Ctx) error {
 		"Food":          food,
 		"Ingredients":   h.getIngredientsFromSession(c),
 		"MyIngredients": h.getMyIngredients(c),
-	})
+	}, "layout")
 }
 
 // AddIngredient は材料リストにアイテムを追加します
@@ -202,10 +202,11 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
 
+	// 新規作成時は常にクリーンな状態から開始
+	sess.Delete("ingredients")
+	_ = sess.Save()
+
 	ingredients := h.getIngredientsFromSession(c)
-	if len(ingredients) == 0 {
-		return c.Redirect("/")
-	}
 
 	// 検索クエリがある場合は食品を検索
 	var foods []map[string]interface{}
@@ -386,7 +387,7 @@ func (h *FoodHandler) RecipeDetail(c *fiber.Ctx) error {
 		"Ingredients":          ingredients,
 		"IsOwner":              isOwner,
 		"HideIngredientDrawer": true,
-	})
+	}, "layout")
 }
 
 // EditRecipe はレシピの編集画面を表示します
@@ -469,111 +470,75 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 
 	// セッションが空の場合、検索の有無に関わらずDBから材料をロードする
 	// これにより、検索(q=...)実行時でも材料リストが維持される
-	if sess.Get("ingredients") == nil {
-		var ingredients []Ingredient
-
-		if rawIngs, ok := recipe["Ingredients"].([]interface{}); ok {
-			for _, rawIng := range rawIngs {
-				if ing, ok := rawIng.(map[string]interface{}); ok {
-					// APIから栄養素を取得
-					ingID := fmt.Sprintf("%v", ing["ID"])
-					apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
-					resp, err := http.Get(apiUrl)
-					if err == nil {
-						var details []map[string]interface{}
-						if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
-							data := make(map[string]interface{})
-							for k, v := range details[0] {
-								data[strings.ToLower(k)] = v
-							}
-
-							qty, _ := ing["Quantity"].(float64)
-							if qty == 0 {
-								qty, _ = ing["Weight"].(float64)
-							}
-							wRatio := qty / 100.0
-
-							addVal(&summary.Energy, data, wRatio, "enerc_kcal", "enerc")
-							addVal(&summary.Prot, data, wRatio, "prot_", "prot", "protein")
-							addVal(&summary.Fat, data, wRatio, "fat_", "fat")
-							addVal(&summary.Cho, data, wRatio, "choavl", "chocdf", "cho")
-							addVal(&summary.K, data, wRatio, "k", "potassium")
-							addVal(&summary.Ca, data, wRatio, "ca", "calcium")
-							addVal(&summary.Fe, data, wRatio, "fe", "iron")
-							addVal(&summary.Zn, data, wRatio, "zn", "zinc")
-							addVal(&summary.VitA, data, wRatio, "vita_rae", "vita")
-							addVal(&summary.VitB, data, wRatio, "thia", "vitb1")
-							addVal(&summary.VitC, data, wRatio, "vitc", "vitamin_c")
-							addVal(&summary.Fiber, data, wRatio, "fib_", "fibtg", "fiber")
-
-							var salt float64
-							addVal(&salt, data, wRatio, "nacl_eq", "salt")
-							if salt == 0 {
-								var na float64
-								addVal(&na, data, wRatio, "na", "sodium")
-								salt = na * 2.54 / 1000.0
-							}
-							summary.Salt += salt
+	// ユーザー要望: 編集画面を開いたときは、そのレシピの材料だけを表示し、セッションを上書きする
+	var ingredients []Ingredient
+	if rawIngs, ok := recipe["Ingredients"].([]interface{}); ok {
+		for _, rawIng := range rawIngs {
+			if ing, ok := rawIng.(map[string]interface{}); ok {
+				// APIから栄養素を取得
+				ingID := fmt.Sprintf("%v", ing["ID"])
+				apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
+				resp, err := http.Get(apiUrl)
+				if err == nil {
+					var details []map[string]interface{}
+					if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
+						data := make(map[string]interface{})
+						for k, v := range details[0] {
+							data[strings.ToLower(k)] = v
 						}
-						resp.Body.Close()
-					}
 
-					// Quantity または Weight キーから数値を取得
-					qty, _ := ing["Quantity"].(float64)
-					if qty == 0 {
-						qty, _ = ing["Weight"].(float64)
-					}
-					// グループ名
-					grp, _ := ing["GroupName"].(string)
-					if grp == "" {
-						grp, _ = ing["Group"].(string)
-					}
+						qty, _ := ing["Quantity"].(float64)
+						if qty == 0 {
+							qty, _ = ing["Weight"].(float64)
+						}
+						wRatio := qty / 100.0
 
-					ingredients = append(ingredients, Ingredient{
-						ID:        fmt.Sprintf("%v", ing["ID"]),
-						Name:      fmt.Sprintf("%v", ing["Name"]),
-						Weight:    qty,
-						GroupName: grp,
-					})
+						addVal(&summary.Energy, data, wRatio, "enerc_kcal", "enerc")
+						addVal(&summary.Prot, data, wRatio, "prot_", "prot", "protein")
+						addVal(&summary.Fat, data, wRatio, "fat_", "fat")
+						addVal(&summary.Cho, data, wRatio, "choavl", "chocdf", "cho")
+						addVal(&summary.K, data, wRatio, "k", "potassium")
+						addVal(&summary.Ca, data, wRatio, "ca", "calcium")
+						addVal(&summary.Fe, data, wRatio, "fe", "iron")
+						addVal(&summary.Zn, data, wRatio, "zn", "zinc")
+						addVal(&summary.VitA, data, wRatio, "vita_rae", "vita")
+						addVal(&summary.VitB, data, wRatio, "thia", "vitb1")
+						addVal(&summary.VitC, data, wRatio, "vitc", "vitamin_c")
+						addVal(&summary.Fiber, data, wRatio, "fib_", "fibtg", "fiber")
+
+						var salt float64
+						addVal(&salt, data, wRatio, "nacl_eq", "salt")
+						if salt == 0 {
+							var na float64
+							addVal(&na, data, wRatio, "na", "sodium")
+							salt = na * 2.54 / 1000.0
+						}
+						summary.Salt += salt
+					}
+					resp.Body.Close()
 				}
+
+				qty, _ := ing["Quantity"].(float64)
+				if qty == 0 {
+					qty, _ = ing["Weight"].(float64)
+				}
+				grp, _ := ing["GroupName"].(string)
+				if grp == "" {
+					grp, _ = ing["Group"].(string)
+				}
+
+				ingredients = append(ingredients, Ingredient{
+					ID:        fmt.Sprintf("%v", ing["ID"]),
+					Name:      fmt.Sprintf("%v", ing["Name"]),
+					Weight:    qty,
+					GroupName: grp,
+				})
 			}
 		}
-		data, _ := json.Marshal(ingredients)
-		sess.Set("ingredients", string(data))
-		_ = sess.Save()
 	}
-
-	// 現在のセッション材料からチャート用に再計算
-	currentIngs := h.getIngredientsFromSession(c)
-	summary = NutrientSummary{} // 計算用にリセット
-	for _, ing := range currentIngs {
-		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", url.QueryEscape(ing.ID))
-		resp, err := http.Get(apiUrl)
-		if err == nil {
-			var details []map[string]interface{}
-			if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
-				data := make(map[string]interface{})
-				for k, v := range details[0] {
-					data[strings.ToLower(k)] = v
-				}
-				wRatio := ing.Weight / 100.0
-				addVal(&summary.Energy, data, wRatio, "enerc_kcal", "enerc")
-				addVal(&summary.Prot, data, wRatio, "prot_", "prot", "protein")
-				addVal(&summary.Fat, data, wRatio, "fat_", "fat")
-				addVal(&summary.Cho, data, wRatio, "choavl", "chocdf", "cho")
-				addVal(&summary.K, data, wRatio, "k", "potassium")
-				addVal(&summary.Ca, data, wRatio, "ca", "calcium")
-				addVal(&summary.Fe, data, wRatio, "fe", "iron")
-				addVal(&summary.Zn, data, wRatio, "zn", "zinc")
-				addVal(&summary.VitA, data, wRatio, "vita_rae", "vita")
-				addVal(&summary.VitB, data, wRatio, "thia", "vitb1")
-				addVal(&summary.VitC, data, wRatio, "vitc", "vitamin_c")
-				addVal(&summary.Fiber, data, wRatio, "fib_", "fibtg", "fiber")
-				// 必要に応じて塩分等も追加
-			}
-			resp.Body.Close()
-		}
-	}
+	data, _ := json.Marshal(ingredients)
+	sess.Set("ingredients", string(data))
+	_ = sess.Save()
 
 	return c.Render("recipe_edit", fiber.Map{
 		"Title":         "レシピ編集",
@@ -586,6 +551,15 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 		"MyIngredients": h.getMyIngredients(c),
 		"IsRecipePage":  true,
 	}, "layout")
+}
+
+// キー正規化のヘルパー
+func normalizeKeysForMap(m map[string]interface{}) map[string]interface{} {
+	newMap := make(map[string]interface{})
+	for k, v := range m {
+		newMap[strings.ToLower(k)] = v
+	}
+	return newMap
 }
 
 // UpdateRecipe はレシピを更新します
@@ -730,7 +704,7 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 		"HideIngredientDrawer": true, // これにより小窓が非表示になります
 		"Ingredients":          h.getIngredientsFromSession(c),
 		"MyIngredients":        h.getMyIngredients(c),
-	})
+	}, "layout")
 }
 
 // AddToCalendar はレシピをカレンダーに登録します

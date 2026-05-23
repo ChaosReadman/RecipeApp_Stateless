@@ -253,7 +253,7 @@ func main() {
 			"Summary":       summary,
 			"MyIngredients": myIngredients,
 			"User":          userName,
-		})
+		}, "layout")
 	})
 
 	// --- 認証ルート ---
@@ -397,8 +397,12 @@ func main() {
 			return c.Redirect("/")
 		}
 
+		// レシピフローと食事記録フローを分離するため、詳細表示時にセッションをクリア（Dirty Session防止）
+		sess.Delete("ingredients")
+		_ = sess.Save()
+
 		return c.Render("recipe_detail", fiber.Map{
-			"Title":   recipe["Title"],
+			"Title":   fmt.Sprintf("%v", recipe["Title"]),
 			"Recipe":  recipe,
 			"User":    sess.Get("username"),
 			"Summary": summary,
@@ -470,6 +474,14 @@ func main() {
 			sess.Save()
 		}
 		return c.Redirect(c.Get("Referer", "/"))
+	})
+
+	// 材料リストを完全にクリアしてトップへ戻るルート
+	app.Get("/ingredients/clear", func(c *fiber.Ctx) error {
+		sess, _ := store.Get(c)
+		sess.Delete("ingredients")
+		sess.Save()
+		return c.Redirect("/")
 	})
 
 	// 食材の重量を更新

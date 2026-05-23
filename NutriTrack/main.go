@@ -274,10 +274,12 @@ func main() {
 		id := c.Params("id")
 		sess, _ := store.Get(c)
 
+		summary := NutrientSummary{}
 		var recipe map[string]interface{}
 		if rawToken := sess.Get("oauth_token"); rawToken != nil {
 			var token oauth2.Token
 			if err := json.Unmarshal([]byte(rawToken.(string)), &token); err == nil {
+				// 認証クライアントの作成
 				client := conf.Client(c.Context(), &token)
 				recipes, err := services.FetchRecipes(c.Context(), client, "", "")
 				if err == nil {
@@ -302,11 +304,75 @@ func main() {
 								r["Steps"] = normalized
 							}
 
+							// ヘルパー関数: 複数のキーから値を加算（計算用）
+							addVal := func(target *float64, ing map[string]interface{}, wRatio float64, keys ...string) {
+								for _, k := range keys {
+									val, ok := ing[strings.ToLower(k)]
+									if !ok || val == nil {
+										continue
+									}
+									var fVal float64
+									switch v := val.(type) {
+									case float64:
+										fVal = v
+									case string:
+										cleaned := strings.TrimSpace(v)
+										if cleaned == "-" || cleaned == "Tr" || cleaned == "(0)" {
+											fVal = 0
+										} else {
+											fVal, _ = strconv.ParseFloat(cleaned, 64)
+										}
+									}
+									*target += fVal * wRatio
+									return
+								}
+							}
+
 							// 材料（Ingredients）のデータ形式をテンプレート用に正規化（Weight -> Quantity, Group -> GroupName）
 							if rawIngs, ok := r["Ingredients"].([]interface{}); ok {
 								normalizedIngs := make([]map[string]interface{}, 0, len(rawIngs))
 								for _, ing := range rawIngs {
 									if m, ok := ing.(map[string]interface{}); ok {
+										// 栄養素の再計算のためにAPIから最新データを取得
+										ingID := fmt.Sprintf("%v", m["ID"])
+										apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", url.QueryEscape(ingID))
+										resp, err := apiClient.Get(apiUrl)
+										if err == nil {
+											var details []FoodMap
+											if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
+												nutrientData := normalizeKeys(details[0])
+												weight, _ := m["Quantity"].(float64)
+												if weight == 0 {
+													weight, _ = m["Weight"].(float64)
+												}
+												wRatio := weight / 100.0
+
+												// 各栄養素の加算
+												addVal(&summary.Energy, nutrientData, wRatio, "enerc_kcal", "enerc")
+												addVal(&summary.Prot, nutrientData, wRatio, "prot_", "prot", "protein")
+												addVal(&summary.Fat, nutrientData, wRatio, "fat_", "fat")
+												addVal(&summary.Cho, nutrientData, wRatio, "choavl", "chocdf", "cho")
+												addVal(&summary.K, nutrientData, wRatio, "k", "potassium")
+												addVal(&summary.Ca, nutrientData, wRatio, "ca", "calcium")
+												addVal(&summary.Fe, nutrientData, wRatio, "fe", "iron")
+												addVal(&summary.Zn, nutrientData, wRatio, "zn", "zinc")
+												addVal(&summary.VitA, nutrientData, wRatio, "vita_rae", "vita")
+												addVal(&summary.VitB, nutrientData, wRatio, "thia", "vitb1")
+												addVal(&summary.VitC, nutrientData, wRatio, "vitc", "vitamin_c")
+												addVal(&summary.Fiber, nutrientData, wRatio, "fib_", "fibtg", "fiber")
+
+												var salt float64
+												addVal(&salt, nutrientData, wRatio, "nacl_eq", "salt")
+												if salt == 0 {
+													var sodium float64
+													addVal(&sodium, nutrientData, wRatio, "na", "sodium")
+													salt = sodium * 2.54 / 1000.0
+												}
+												summary.Salt += salt
+											}
+											resp.Body.Close()
+										}
+
 										// テンプレートが期待するキー名（Quantity, GroupName）に統一する
 										if w, exists := m["Weight"]; exists {
 											m["Quantity"] = w
@@ -335,8 +401,9 @@ func main() {
 			"Title":   recipe["Title"],
 			"Recipe":  recipe,
 			"User":    sess.Get("username"),
+			"Summary": summary,
 			"IsOwner": true,
-		})
+		}, "layout")
 	})
 
 	// --- 食材・レシピ関連ルート (foodHandlerの例) ---

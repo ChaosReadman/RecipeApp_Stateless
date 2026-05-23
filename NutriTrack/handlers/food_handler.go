@@ -11,6 +11,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -25,6 +26,23 @@ import (
 type FoodHandler struct {
 	Store       *session.Store
 	OAuthConfig *oauth2.Config
+}
+
+// NutrientSummary は合計栄養素を保持する構造体です
+type NutrientSummary struct {
+	Energy float64 `json:"energy"`
+	Prot   float64 `json:"protein"`
+	Fat    float64 `json:"fat"`
+	Cho    float64 `json:"carbohydrate"`
+	K      float64 `json:"potassium"`
+	Ca     float64 `json:"calcium"`
+	Fe     float64 `json:"iron"`
+	Zn     float64 `json:"zinc"`
+	VitA   float64 `json:"vitamin_a"`
+	VitB   float64 `json:"vitamin_b"`
+	VitC   float64 `json:"vitamin_c"`
+	Fiber  float64 `json:"fiber"`
+	Salt   float64 `json:"salt"`
 }
 
 // Ingredient は材料リストのアイテム構造体です
@@ -180,6 +198,7 @@ func (h *FoodHandler) RemoveIngredient(c *fiber.Ctx) error {
 
 // NewRecipe はレシピ作成画面を表示します
 func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
+	query := c.Query("q")
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
 
@@ -188,13 +207,82 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 		return c.Redirect("/")
 	}
 
-	return c.Render("recipe_new", fiber.Map{
+	// 検索クエリがある場合は食品を検索
+	var foods []map[string]interface{}
+	if query != "" {
+		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+		resp, _ := http.Get(apiUrl)
+		if resp != nil {
+			defer resp.Body.Close()
+			json.NewDecoder(resp.Body).Decode(&foods)
+		}
+	}
+
+	// 栄養素の加算用ヘルパー (EditRecipeと同様)
+	summary := NutrientSummary{}
+	addVal := func(target *float64, data map[string]interface{}, wRatio float64, keys ...string) {
+		for _, k := range keys {
+			if val, ok := data[strings.ToLower(k)]; ok && val != nil {
+				var fVal float64
+				switch v := val.(type) {
+				case float64:
+					fVal = v
+				case string:
+					cleaned := strings.TrimSpace(v)
+					if cleaned == "-" || cleaned == "Tr" || cleaned == "(0)" {
+						fVal = 0
+					} else {
+						fVal, _ = strconv.ParseFloat(cleaned, 64)
+					}
+				}
+				*target += fVal * wRatio
+				return
+			}
+		}
+	}
+
+	// 現在のセッション材料からチャート用に計算
+	for _, ing := range ingredients {
+		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", url.QueryEscape(ing.ID))
+		resp, err := http.Get(apiUrl)
+		if err == nil {
+			var details []map[string]interface{}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
+				data := make(map[string]interface{})
+				for k, v := range details[0] {
+					data[strings.ToLower(k)] = v
+				}
+				wRatio := ing.Weight / 100.0
+				addVal(&summary.Energy, data, wRatio, "enerc_kcal", "enerc")
+				addVal(&summary.Prot, data, wRatio, "prot_", "prot", "protein")
+				addVal(&summary.Fat, data, wRatio, "fat_", "fat")
+				addVal(&summary.Cho, data, wRatio, "choavl", "chocdf", "cho")
+				addVal(&summary.K, data, wRatio, "k", "potassium")
+				addVal(&summary.Ca, data, wRatio, "ca", "calcium")
+				addVal(&summary.Fe, data, wRatio, "fe", "iron")
+				addVal(&summary.Zn, data, wRatio, "zn", "zinc")
+				addVal(&summary.VitA, data, wRatio, "vita_rae", "vita")
+				addVal(&summary.VitB, data, wRatio, "thia", "vitb1")
+				addVal(&summary.VitC, data, wRatio, "vitc", "vitamin_c")
+				addVal(&summary.Fiber, data, wRatio, "fib_", "fibtg", "fiber")
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+	}
+
+	return c.Render("recipe_edit", fiber.Map{
 		"Title":         "レシピ作成",
 		"User":          user,
+		"Recipe":        map[string]interface{}{}, // 空のレシピ
+		"Foods":         foods,
+		"Query":         query,
+		"Summary":       summary,
 		"Ingredients":   ingredients,
 		"MyIngredients": h.getMyIngredients(c),
 		"IsRecipePage":  true,
-	})
+	}, "layout")
 }
 
 // CreateRecipe はレシピをデータベースに保存します
@@ -356,13 +444,80 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 		json.NewDecoder(resp.Body).Decode(&foods)
 	}
 
+	// 栄養素の加算用ヘルパー
+	summary := NutrientSummary{}
+	addVal := func(target *float64, data map[string]interface{}, wRatio float64, keys ...string) {
+		for _, k := range keys {
+			if val, ok := data[strings.ToLower(k)]; ok && val != nil {
+				var fVal float64
+				switch v := val.(type) {
+				case float64:
+					fVal = v
+				case string:
+					cleaned := strings.TrimSpace(v)
+					if cleaned == "-" || cleaned == "Tr" || cleaned == "(0)" {
+						fVal = 0
+					} else {
+						fVal, _ = strconv.ParseFloat(cleaned, 64)
+					}
+				}
+				*target += fVal * wRatio
+				return
+			}
+		}
+	}
+
 	// セッションが空の場合、検索の有無に関わらずDBから材料をロードする
 	// これにより、検索(q=...)実行時でも材料リストが維持される
 	if sess.Get("ingredients") == nil {
 		var ingredients []Ingredient
+
 		if rawIngs, ok := recipe["Ingredients"].([]interface{}); ok {
 			for _, rawIng := range rawIngs {
 				if ing, ok := rawIng.(map[string]interface{}); ok {
+					// APIから栄養素を取得
+					ingID := fmt.Sprintf("%v", ing["ID"])
+					apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
+					resp, err := http.Get(apiUrl)
+					if err == nil {
+						var details []map[string]interface{}
+						if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
+							data := make(map[string]interface{})
+							for k, v := range details[0] {
+								data[strings.ToLower(k)] = v
+							}
+
+							qty, _ := ing["Quantity"].(float64)
+							if qty == 0 {
+								qty, _ = ing["Weight"].(float64)
+							}
+							wRatio := qty / 100.0
+
+							addVal(&summary.Energy, data, wRatio, "enerc_kcal", "enerc")
+							addVal(&summary.Prot, data, wRatio, "prot_", "prot", "protein")
+							addVal(&summary.Fat, data, wRatio, "fat_", "fat")
+							addVal(&summary.Cho, data, wRatio, "choavl", "chocdf", "cho")
+							addVal(&summary.K, data, wRatio, "k", "potassium")
+							addVal(&summary.Ca, data, wRatio, "ca", "calcium")
+							addVal(&summary.Fe, data, wRatio, "fe", "iron")
+							addVal(&summary.Zn, data, wRatio, "zn", "zinc")
+							addVal(&summary.VitA, data, wRatio, "vita_rae", "vita")
+							addVal(&summary.VitB, data, wRatio, "thia", "vitb1")
+							addVal(&summary.VitC, data, wRatio, "vitc", "vitamin_c")
+							addVal(&summary.Fiber, data, wRatio, "fib_", "fibtg", "fiber")
+
+							var salt float64
+							addVal(&salt, data, wRatio, "nacl_eq", "salt")
+							if salt == 0 {
+								var na float64
+								addVal(&na, data, wRatio, "na", "sodium")
+								salt = na * 2.54 / 1000.0
+							}
+							summary.Salt += salt
+						}
+						resp.Body.Close()
+					}
+
 					// Quantity または Weight キーから数値を取得
 					qty, _ := ing["Quantity"].(float64)
 					if qty == 0 {
@@ -388,16 +543,49 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 		_ = sess.Save()
 	}
 
+	// 現在のセッション材料からチャート用に再計算
+	currentIngs := h.getIngredientsFromSession(c)
+	summary = NutrientSummary{} // 計算用にリセット
+	for _, ing := range currentIngs {
+		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", url.QueryEscape(ing.ID))
+		resp, err := http.Get(apiUrl)
+		if err == nil {
+			var details []map[string]interface{}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
+				data := make(map[string]interface{})
+				for k, v := range details[0] {
+					data[strings.ToLower(k)] = v
+				}
+				wRatio := ing.Weight / 100.0
+				addVal(&summary.Energy, data, wRatio, "enerc_kcal", "enerc")
+				addVal(&summary.Prot, data, wRatio, "prot_", "prot", "protein")
+				addVal(&summary.Fat, data, wRatio, "fat_", "fat")
+				addVal(&summary.Cho, data, wRatio, "choavl", "chocdf", "cho")
+				addVal(&summary.K, data, wRatio, "k", "potassium")
+				addVal(&summary.Ca, data, wRatio, "ca", "calcium")
+				addVal(&summary.Fe, data, wRatio, "fe", "iron")
+				addVal(&summary.Zn, data, wRatio, "zn", "zinc")
+				addVal(&summary.VitA, data, wRatio, "vita_rae", "vita")
+				addVal(&summary.VitB, data, wRatio, "thia", "vitb1")
+				addVal(&summary.VitC, data, wRatio, "vitc", "vitamin_c")
+				addVal(&summary.Fiber, data, wRatio, "fib_", "fibtg", "fiber")
+				// 必要に応じて塩分等も追加
+			}
+			resp.Body.Close()
+		}
+	}
+
 	return c.Render("recipe_edit", fiber.Map{
 		"Title":         "レシピ編集",
 		"User":          user,
 		"Recipe":        recipe,
 		"Foods":         foods,
 		"Query":         query,
+		"Summary":       summary,
 		"Ingredients":   h.getIngredientsFromSession(c),
 		"MyIngredients": h.getMyIngredients(c),
 		"IsRecipePage":  true,
-	})
+	}, "layout")
 }
 
 // UpdateRecipe はレシピを更新します

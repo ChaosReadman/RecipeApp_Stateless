@@ -1,21 +1,46 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.Title}} | レシピアプリ</title>
+    <title>{{.Title}} - NutriTrack</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* 共通のダークテーマ配色 */
+        html, body {
+            background-color: #11191f !important;
+            color: #bbc6ce !important;
+            margin: 0;
+            padding: 0;
+        }
+        article {
+            background-color: #1a232e !important;
+            border: 1px solid #243342 !important;
+        }
+        table.striped thead th {
+            background-color: #243342 !important;
+        }
+
+        /* 2カラムレイアウト（左2:右1）の統一定義 */
+        @media (min-width: 992px) {
+            .recipe-container {
+                display: grid;
+                grid-template-columns: 2fr 1fr;
+                gap: var(--pico-spacing);
+                align-items: start;
+            }
+        }
+
+        /* フォーム要素のダークモード調整 */
+        input, select, textarea {
+            background-color: #0d1419 !important;
+            color: #fff !important;
+            border-color: #243342 !important;
+        }
+    </style>
 </head>
 <body>
-    <nav class="container-fluid"> <!-- 全幅のナビゲーションバー -->
-    <ul>
-        <li><a href="/"><strong>レシピアプリ</strong></a></li> <!-- アプリケーション名へのリンク -->
-    </ul>
-    <ul>
-        <li><a href="/calendar">📅 カレンダー</a></li> <!-- カレンダーへのグローバルリンク -->
-        <!-- 必要に応じて、ログイン/ログアウト、新規レシピ投稿などのグローバルなボタンをここに追加できます -->
-    </ul>
-    </nav>
     <main class="container">
         {{embed}}
     </main>

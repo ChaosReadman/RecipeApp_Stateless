@@ -1,36 +1,10 @@
-<script>
-    // <html>要素に明示的にダークテーマを設定し、TOP画面と同じ「シックな黒い背景」にする
-    document.documentElement.setAttribute('data-theme', 'dark');
-</script>
-
-<style>
-    /* 背景色と文字色を Pico Dark の標準色に強制 */
-    html, 
-    body {
-        background-color: #11191f !important;
-        color: #bbc6ce !important;
-        margin: 0;
-        padding: 0;
-    }
-
-    /* 編集画面の各セクション（article）も浮かないように色を統一 */
-    article {
-        background-color: #1a232e !important;
-        border: 1px solid #243342 !important;
-    }
-
-    /* 材料リストのテーブルヘッダー */
-    table.striped thead th {
-        background-color: #243342 !important;
-    }
-</style>
-
-<main class="container" data-theme="dark">
 <nav aria-label="breadcrumb">
     <ul>
         <li><a href="/">トップ</a></li>
+        {{if .Recipe.ID}}
         <li><a href="/recipe/{{.Recipe.ID}}">レシピ詳細</a></li>
-        <li>レシピ編集</li>
+        {{end}}
+        <li>{{if .Recipe.ID}}レシピ編集{{else}}レシピ作成{{end}}</li>
     </ul>
 </nav>
 
@@ -42,12 +16,12 @@
     <textarea id="description" name="description" form="recipe-form">{{.Recipe.Description}}</textarea>
 </header>
 
-    <div class="grid">
-        <!-- 左カラム: 材料リスト (詳細画面の構成に合わせる) -->
-        <div>
+<div class="recipe-container">
+    <!-- 左カラム: 材料操作と調理工程 -->
+    <div>
             <article>
                 <header><strong>食品を探して追加</strong></header>
-                <form action="/recipe/{{.Recipe.ID}}/edit" method="GET" style="margin-bottom: 1rem;">
+                <form action="{{if .Recipe.ID}}/recipe/{{.Recipe.ID}}/edit{{else}}/recipe/new{{end}}" method="GET" style="margin-bottom: 1rem;">
                     <div style="display: flex; gap: 10px;">
                         <input type="text" name="q" placeholder="食品名で検索..." value="{{.Query}}">
                         <button type="submit" class="outline">検索</button>
@@ -106,10 +80,7 @@
                     </div>
                 </footer>
             </article>
-        </div>
 
-        <!-- 右カラム: 調理工程 (詳細画面の構成に合わせる) -->
-        <div>
             <article>
                 <header><strong>作り方</strong></header>
                 <div id="steps-container">
@@ -127,18 +98,27 @@
                 </div>
                 <button type="button" class="outline" style="width: 100%;" onclick="addStep()">工程を追加</button>
             </article>
+
+            <!-- アクションボタンを左カラムの最後に配置 -->
+            <div style="margin-top: 2rem; display: flex; gap: 10px;">
+                <button type="submit" form="recipe-form" formaction="/recipe/create" style="margin-bottom: 0;">新しくレシピを保存</button>
+                <button type="submit" form="recipe-form" formaction="/recipe/{{.Recipe.ID}}/update" style="margin-bottom: 0;" {{if not .Recipe.ID}}disabled{{end}}>レシピを上書き保存</button>
+                <a href="{{if .Recipe.ID}}/recipe/{{.Recipe.ID}}{{else}}/{{end}}" role="button" class="outline secondary" style="margin-bottom: 0;">キャンセル</a>
+            </div>
         </div>
-    </div>
 
-    <!-- メインの更新フォームはここに配置（ネストを解消） -->
-    <form action="/recipe/{{.Recipe.ID}}/update" method="POST" id="recipe-form">
-    </form>
+    <!-- 右カラム: 栄養素チャート -->
+    <aside>
+        <article>
+            <header><strong>栄養バランス</strong></header>
+            <div style="max-width: 100%; margin: 0 auto;">
+                <canvas id="nutrientChart"></canvas>
+            </div>
+        </article>
+    </aside>
+</div>
 
-    <div style="margin-top: 2rem; display: flex; gap: 10px;">
-        <button type="submit" form="recipe-form">更新を保存する</button>
-        <a href="/recipe/{{.Recipe.ID}}" role="button" class="outline secondary">キャンセル</a>
-    </div>
-</main>
+<form method="POST" id="recipe-form"></form>
 
 <!-- 材料操作用の隠しフォーム -->
 {{range .Ingredients}}
@@ -154,6 +134,33 @@
 {{end}}
 
 <script>
+    // チャート表示スクリプト (recipe_detailと同様)
+    (function() {
+        const ctx = document.getElementById('nutrientChart').getContext('2d');
+        const summary = {
+            energy: {{.Summary.Energy}}, prot: {{.Summary.Prot}}, fat: {{.Summary.Fat}}, cho: {{.Summary.Cho}},
+            k: {{.Summary.K}}, ca: {{.Summary.Ca}}, fe: {{.Summary.Fe}}, zn: {{.Summary.Zn}},
+            vitA: {{.Summary.VitA}}, vitB: {{.Summary.VitB}}, vitC: {{.Summary.VitC}}, fiber: {{.Summary.Fiber}}, salt: {{.Summary.Salt}}
+        };
+        new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: ['エネルギー', 'たんぱく質', '脂質', '炭水化物', 'カリウム', 'カルシウム', '鉄', '亜鉛', 'ビタミンA', 'ビタミンB', 'ビタミンC', '食物繊維', '食塩'],
+                datasets: [{
+                    data: [
+                        Math.min((summary.energy/700)*100, 120), Math.min((summary.prot/20)*100, 120), Math.min((summary.fat/20)*100, 120),
+                        Math.min((summary.cho/100)*100, 120), Math.min((summary.k/800)*100, 120), Math.min((summary.ca/200)*100, 120),
+                        Math.min((summary.fe/2.5)*100, 120), Math.min((summary.zn/3.0)*100, 120), Math.min((summary.vitA/250)*100, 120),
+                        Math.min((summary.vitB/0.4)*100, 120), Math.min((summary.vitC/33)*100, 120), Math.min((summary.fiber/6.0)*100, 120),
+                        Math.min((summary.salt/2.5)*100, 120)
+                    ],
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)', borderColor: 'rgb(54, 162, 235)'
+                }]
+            },
+            options: { scales: { r: { suggestedMax: 100, ticks: { display: false } } }, plugins: { legend: { display: false } } }
+        });
+    })();
+
     function addStep() {
         const container = document.getElementById('steps-container');
         const stepCount = container.getElementsByClassName('step-item').length + 1;

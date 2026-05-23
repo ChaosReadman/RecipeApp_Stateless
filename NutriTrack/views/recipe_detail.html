@@ -1,31 +1,3 @@
-<script>
-    // <html>要素に明示的にダークテーマを設定
-    document.documentElement.setAttribute('data-theme', 'dark');
-</script>
-
-<style>
-    /* Pico.cssの変数が読み込まれる前や、上書きが効かない場合に備えて直接指定 */
-    html, 
-    body {
-        background-color: #11191f !important; /* Pico Dark標準の背景色 */
-        color: #bbc6ce !important;
-        margin: 0;
-        padding: 0;
-    }
-
-    /* カード（article）の背景色も他画面のダークモードに合わせる */
-    article {
-        background-color: #1a232e !important;
-        border: 1px solid #243342 !important;
-    }
-
-    /* 材料リストのテーブルヘッダーを少し目立たせる */
-    table.striped thead th {
-        background-color: #243342 !important;
-    }
-</style>
-
-<main class="container" data-theme="dark">
 <nav aria-label="breadcrumb">
     <ul>
         <li><a href="/">トップ</a></li>
@@ -51,7 +23,8 @@
     </article>
 </header>
 
-<div class="grid">
+<div class="recipe-container">
+    <!-- 左カラム: 材料と作り方 -->
     <div>
         <article>
             <header><strong>材料</strong></header>
@@ -70,8 +43,7 @@
                 </tbody>
             </table>
         </article>
-    </div>
-    <div>
+
         <article>
             <header><strong>作り方</strong></header>
             <div id="steps-list">
@@ -82,10 +54,76 @@
             </div>
         </article>
     </div>
+
+    <!-- 右カラム: 栄養素チャート -->
+    <aside>
+        <article>
+            <header><strong>栄養バランス (1食目安)</strong></header>
+            <div style="max-width: 100%; margin: 0 auto;">
+                <canvas id="nutrientChart"></canvas>
+            </div>
+        </article>
+    </aside>
 </div>
-</main>
 
 <script>
+// レーダーチャートの初期化
+(function() {
+    const ctx = document.getElementById('nutrientChart').getContext('2d');
+    const summary = {
+        energy: {{.Summary.Energy}},
+        prot: {{.Summary.Prot}},
+        fat: {{.Summary.Fat}},
+        cho: {{.Summary.Cho}},
+        k: {{.Summary.K}},
+        ca: {{.Summary.Ca}},
+        fe: {{.Summary.Fe}},
+        zn: {{.Summary.Zn}},
+        vitA: {{.Summary.VitA}},
+        vitB: {{.Summary.VitB}},
+        vitC: {{.Summary.VitC}},
+        fiber: {{.Summary.Fiber}},
+        salt: {{.Summary.Salt}}
+    };
+
+    const data = {
+        labels: ['エネルギー', 'たんぱく質', '脂質', '炭水化物', 'カリウム', 'カルシウム', '鉄', '亜鉛', 'ビタミンA', 'ビタミンB', 'ビタミンC', '食物繊維', '食塩'],
+        datasets: [{
+            label: '充足率 (%)',
+            data: [
+                Math.min((summary.energy / 700) * 100, 120),
+                Math.min((summary.prot / 20) * 100, 120),
+                Math.min((summary.fat / 20) * 100, 120),
+                Math.min((summary.cho / 100) * 100, 120),
+                Math.min((summary.k / 800) * 100, 120),
+                Math.min((summary.ca / 200) * 100, 120),
+                Math.min((summary.fe / 2.5) * 100, 120),
+                Math.min((summary.zn / 3.0) * 100, 120),
+                Math.min((summary.vitA / 250) * 100, 120),
+                Math.min((summary.vitB / 0.4) * 100, 120),
+                Math.min((summary.vitC / 33) * 100, 120),
+                Math.min((summary.fiber / 6.0) * 100, 120),
+                Math.min((summary.salt / 2.5) * 100, 120)
+            ],
+            fill: true,
+            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+            borderColor: 'rgb(54, 162, 235)',
+            pointBackgroundColor: 'rgb(54, 162, 235)',
+        }]
+    };
+
+    new Chart(ctx, {
+        type: 'radar',
+        data: data,
+        options: {
+            scales: {
+                r: { suggestedMin: 0, suggestedMax: 100, ticks: { display: false } }
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
+})();
+
 function updateQuantities() {
     const servings = parseFloat(document.getElementById('servings').value) || 1;
     document.querySelectorAll('.qty-val').forEach(el => {

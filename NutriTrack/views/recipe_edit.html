@@ -1,3 +1,31 @@
+<script>
+    // <html>要素に明示的にダークテーマを設定し、TOP画面と同じ「シックな黒い背景」にする
+    document.documentElement.setAttribute('data-theme', 'dark');
+</script>
+
+<style>
+    /* 背景色と文字色を Pico Dark の標準色に強制 */
+    html, 
+    body {
+        background-color: #11191f !important;
+        color: #bbc6ce !important;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* 編集画面の各セクション（article）も浮かないように色を統一 */
+    article {
+        background-color: #1a232e !important;
+        border: 1px solid #243342 !important;
+    }
+
+    /* 材料リストのテーブルヘッダー */
+    table.striped thead th {
+        background-color: #243342 !important;
+    }
+</style>
+
+<main class="container" data-theme="dark">
 <nav aria-label="breadcrumb">
     <ul>
         <li><a href="/">トップ</a></li>
@@ -32,12 +60,12 @@
                         <tbody>
                             {{range .Foods}}
                             <tr>
-                                <td>{{.Name}}</td>
+                                <td>{{.name}}</td>
                                 <td style="text-align: right;">
-                                    <button type="submit" form="add-search-{{.ID}}" class="outline" style="padding: 2px 8px; font-size: 0.7rem;">追加</button>
-                                    <form id="add-search-{{.ID}}" action="/ingredients/add" method="POST" style="display:none;">
-                                        <input type="hidden" name="id" value="{{.ID}}">
-                                        <input type="hidden" name="name" value="{{.Name}}">
+                                    <button type="submit" form="add-search-{{.num_id}}" class="outline" style="padding: 2px 8px; font-size: 0.7rem;">追加</button>
+                                    <form id="add-search-{{.num_id}}" action="/ingredients/add" method="POST" style="display:none;">
+                                        <input type="hidden" name="id" value="{{.num_id}}">
+                                        <input type="hidden" name="name" value="{{.name}}">
                                     </form>
                                 </td>
                             </tr>
@@ -55,7 +83,7 @@
                         <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 10px; border: 1px solid var(--pico-form-element-border-color); border-radius: var(--pico-border-radius);">
                             <input type="hidden" name="ingredient_ids" value="{{.ID}}" form="recipe-form">
                             <span style="flex-basis: 100%; font-weight: bold;">{{.Name}}</span>
-                            <input type="number" name="qty_{{.ID}}" value="{{.Weight}}" placeholder="量 (g)" required style="flex-grow: 1; min-width: 80px; margin-bottom: 0;" form="recipe-form">
+                            <input type="number" name="qty_{{.ID}}" value="{{.Weight}}" step="any" min="0" placeholder="量 (g)" required style="flex-grow: 1; min-width: 80px; margin-bottom: 0;" form="recipe-form">
                             <input type="text" name="grp_{{.ID}}" value="{{.GroupName}}" placeholder="グループ名" style="flex-grow: 2; min-width: 120px; margin-bottom: 0;" form="recipe-form">
                             <button type="submit" form="remove-form-{{.ID}}" class="outline secondary" style="padding: 2px 8px; font-size: 0.7rem; border:none; margin-bottom: 0;">✕</button>
                         </div>
@@ -110,10 +138,13 @@
         <button type="submit" form="recipe-form">更新を保存する</button>
         <a href="/recipe/{{.Recipe.ID}}" role="button" class="outline secondary">キャンセル</a>
     </div>
+</main>
 
 <!-- 材料操作用の隠しフォーム -->
 {{range .Ingredients}}
-<form id="remove-form-{{.ID}}" action="/ingredients/remove/{{.ID}}" method="POST" style="display:none;"></form>
+<form id="remove-form-{{.ID}}" action="/ingredients/remove" method="POST" style="display:none;">
+    <input type="hidden" name="id" value="{{.ID}}">
+</form>
 {{end}}
 {{range .MyIngredients}}
 <form id="add-form-{{.ID}}" action="/ingredients/add" method="POST" style="display:none;">

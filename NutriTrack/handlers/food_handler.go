@@ -239,10 +239,10 @@ func (h *FoodHandler) CreateRecipe(c *fiber.Ctx) error {
 		}
 
 		ingredientList = append(ingredientList, map[string]interface{}{
-			"ID":     id,
-			"Name":   name,
-			"Weight": weight,
-			"Group":  group,
+			"ID":        id,
+			"Name":      name,
+			"Quantity":  weight,
+			"GroupName": group,
 		})
 	}
 
@@ -308,10 +308,44 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 	query := c.Query("q")
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
-	userID, _ := sess.Get("user_id").(string)
 
-	// TODO: スプレッドシートからレシピを取得
-	recipe := &models.RecipeFull{UserID: userID}
+	var recipe map[string]interface{}
+	if rawToken := sess.Get("oauth_token"); rawToken != nil {
+		var token oauth2.Token
+		json.Unmarshal([]byte(rawToken.(string)), &token)
+		client := h.OAuthConfig.Client(c.Context(), &token)
+		// JSONファイルから全レシピを取得してIDで検索
+		recipes, err := services.FetchRecipes(c.Context(), client, "", "")
+		if err == nil {
+			for _, r := range recipes {
+				if fmt.Sprintf("%v", r["ID"]) == id {
+					recipe = r
+					break
+				}
+			}
+		}
+	}
+
+	if recipe == nil {
+		return c.Redirect("/")
+	}
+
+	// 工程（Steps）のデータ形式をテンプレート用に正規化（古い形式の互換性維持）
+	if rawSteps, ok := recipe["Steps"].([]interface{}); ok {
+		normalized := make([]map[string]interface{}, 0, len(rawSteps))
+		for i, s := range rawSteps {
+			switch v := s.(type) {
+			case string:
+				normalized = append(normalized, map[string]interface{}{
+					"StepNumber":  i + 1,
+					"Instruction": v,
+				})
+			case map[string]interface{}:
+				normalized = append(normalized, v)
+			}
+		}
+		recipe["Steps"] = normalized
+	}
 
 	// 検索クエリがある場合は食品を検索
 	var foods []map[string]interface{}
@@ -326,13 +360,28 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 	// これにより、検索(q=...)実行時でも材料リストが維持される
 	if sess.Get("ingredients") == nil {
 		var ingredients []Ingredient
-		for _, ing := range recipe.Ingredients {
-			ingredients = append(ingredients, Ingredient{
-				ID:        ing.FoodID,
-				Name:      ing.Name,
-				Weight:    ing.Quantity,
-				GroupName: ing.GroupName,
-			})
+		if rawIngs, ok := recipe["Ingredients"].([]interface{}); ok {
+			for _, rawIng := range rawIngs {
+				if ing, ok := rawIng.(map[string]interface{}); ok {
+					// Quantity または Weight キーから数値を取得
+					qty, _ := ing["Quantity"].(float64)
+					if qty == 0 {
+						qty, _ = ing["Weight"].(float64)
+					}
+					// グループ名
+					grp, _ := ing["GroupName"].(string)
+					if grp == "" {
+						grp, _ = ing["Group"].(string)
+					}
+
+					ingredients = append(ingredients, Ingredient{
+						ID:        fmt.Sprintf("%v", ing["ID"]),
+						Name:      fmt.Sprintf("%v", ing["Name"]),
+						Weight:    qty,
+						GroupName: grp,
+					})
+				}
+			}
 		}
 		data, _ := json.Marshal(ingredients)
 		sess.Set("ingredients", string(data))
@@ -354,12 +403,59 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 // UpdateRecipe はレシピを更新します
 func (h *FoodHandler) UpdateRecipe(c *fiber.Ctx) error {
 	id := c.Params("id")
-	log.Printf("DEBUG: UpdateRecipe called with ID: %s", id)
 	sess, _ := h.Store.Get(c)
-	userID, _ := sess.Get("user_id").(string)
+	rawToken := sess.Get("oauth_token")
 
-	// TODO: スプレッドシート側のデータを更新
-	log.Printf("UpdateRecipe (WIP): User %s updated recipe %s", userID, id)
+	if rawToken == nil {
+		return c.Status(401).SendString("認証が必要です")
+	}
+
+	title := c.FormValue("title")
+	description := c.FormValue("description")
+
+	// 調理手順の取得
+	stepsRaw := c.Request().PostArgs().PeekMulti("steps")
+	steps := make([]string, len(stepsRaw))
+	for i, s := range stepsRaw {
+		steps[i] = string(s)
+	}
+
+	// 材料の詳細を取得
+	ingIDs := c.Request().PostArgs().PeekMulti("ingredient_ids")
+	var ingredientList []map[string]interface{}
+
+	sessionIngs := h.getIngredientsFromSession(c)
+	ingMap := make(map[string]Ingredient)
+	for _, v := range sessionIngs {
+		ingMap[v.ID] = v
+	}
+
+	for _, idByte := range ingIDs {
+		ingID := string(idByte)
+		weight, _ := strconv.ParseFloat(c.FormValue("qty_"+ingID), 64)
+		group := c.FormValue("grp_" + ingID)
+		name := ingID
+		if val, ok := ingMap[ingID]; ok {
+			name = val.Name
+		}
+
+		ingredientList = append(ingredientList, map[string]interface{}{
+			"ID":        ingID,
+			"Name":      name,
+			"Quantity":  weight,
+			"GroupName": group,
+		})
+	}
+
+	var token oauth2.Token
+	json.Unmarshal([]byte(rawToken.(string)), &token)
+	client := h.OAuthConfig.Client(context.Background(), &token)
+
+	err := services.UpdateRecipe(c.Context(), client, id, title, description, ingredientList, steps)
+	if err != nil {
+		log.Printf("UpdateRecipe Error: %v", err)
+		return c.Status(500).SendString("レシピの更新に失敗しました: " + err.Error())
+	}
 
 	// セッションの材料リストをクリア
 	sess.Delete("ingredients")

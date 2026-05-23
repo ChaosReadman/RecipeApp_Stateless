@@ -3,7 +3,6 @@ package main
 import (
 	"NutriTrack/handlers"
 	"NutriTrack/services"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -134,18 +133,16 @@ func main() {
 		userName := sess.Get("username")
 		ingredients := getIngredients(sess)
 
+		// Google Driveからレシピを取得
 		recipes := []map[string]interface{}{}
-		// ログイン中であればスプレッドシートからレシピを取得
 		if rawToken := sess.Get("oauth_token"); rawToken != nil {
 			var token oauth2.Token
 			if err := json.Unmarshal([]byte(rawToken.(string)), &token); err == nil {
-				client := conf.Client(context.Background(), &token)
-				spreadsheetId, err := services.GetOrCreateRecipeSpreadsheet(c.Context(), client)
+				// conf は main.go 内で定義されている oauth2.Config
+				client := conf.Client(c.Context(), &token)
+				data, err := services.FetchRecipes(c.Context(), client, "", recipeQuery)
 				if err == nil {
-					data, err := services.FetchRecipes(c.Context(), client, spreadsheetId, recipeQuery)
-					if err == nil {
-						recipes = data
-					}
+					recipes = data
 				}
 			}
 		}
@@ -269,6 +266,78 @@ func main() {
 	// --- レシピ関連ルート ---
 	app.Get("/recipe/new", foodHandler.NewRecipe)
 	app.Post("/recipe/create", foodHandler.CreateRecipe)
+	app.Get("/recipe/:id/edit", foodHandler.EditRecipe)
+	app.Post("/recipe/:id/update", foodHandler.UpdateRecipe)
+
+	// レシピ詳細（調理画面）
+	app.Get("/recipe/:id", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		sess, _ := store.Get(c)
+
+		var recipe map[string]interface{}
+		if rawToken := sess.Get("oauth_token"); rawToken != nil {
+			var token oauth2.Token
+			if err := json.Unmarshal([]byte(rawToken.(string)), &token); err == nil {
+				client := conf.Client(c.Context(), &token)
+				recipes, err := services.FetchRecipes(c.Context(), client, "", "")
+				if err == nil {
+					for _, r := range recipes {
+						if fmt.Sprintf("%v", r["ID"]) == id {
+							// 工程（Steps）のデータ形式をテンプレート用に正規化（古い形式の互換性維持）
+							if rawSteps, ok := r["Steps"].([]interface{}); ok {
+								normalized := make([]map[string]interface{}, 0, len(rawSteps))
+								for i, s := range rawSteps {
+									switch v := s.(type) {
+									case string:
+										// 古いデータ形式（[]string）を変換
+										normalized = append(normalized, map[string]interface{}{
+											"StepNumber":  i + 1,
+											"Instruction": v,
+										})
+									case map[string]interface{}:
+										// すでに新しい形式の場合はそのまま利用
+										normalized = append(normalized, v)
+									}
+								}
+								r["Steps"] = normalized
+							}
+
+							// 材料（Ingredients）のデータ形式をテンプレート用に正規化（Weight -> Quantity, Group -> GroupName）
+							if rawIngs, ok := r["Ingredients"].([]interface{}); ok {
+								normalizedIngs := make([]map[string]interface{}, 0, len(rawIngs))
+								for _, ing := range rawIngs {
+									if m, ok := ing.(map[string]interface{}); ok {
+										// テンプレートが期待するキー名（Quantity, GroupName）に統一する
+										if w, exists := m["Weight"]; exists {
+											m["Quantity"] = w
+										}
+										if g, exists := m["Group"]; exists {
+											m["GroupName"] = g
+										}
+										normalizedIngs = append(normalizedIngs, m)
+									}
+								}
+								r["Ingredients"] = normalizedIngs
+							}
+							recipe = r
+							break
+						}
+					}
+				}
+			}
+		}
+
+		if recipe == nil {
+			return c.Redirect("/")
+		}
+
+		return c.Render("recipe_detail", fiber.Map{
+			"Title":   recipe["Title"],
+			"Recipe":  recipe,
+			"User":    sess.Get("username"),
+			"IsOwner": true,
+		})
+	})
 
 	// --- 食材・レシピ関連ルート (foodHandlerの例) ---
 	// 食材をリストに追加
@@ -333,7 +402,7 @@ func main() {
 			sess.Set("ingredients", string(data))
 			sess.Save()
 		}
-		return c.Redirect("/")
+		return c.Redirect(c.Get("Referer", "/"))
 	})
 
 	// 食材の重量を更新
@@ -354,6 +423,45 @@ func main() {
 		data, _ := json.Marshal(ingredients)
 		sess.Set("ingredients", string(data))
 		sess.Save()
+		return c.Redirect(c.Get("Referer", "/"))
+	})
+
+	// 今の食事リストを履歴として保存
+	app.Post("/history/record", func(c *fiber.Ctx) error {
+		sess, _ := store.Get(c)
+		ingredients := getIngredients(sess)
+		if len(ingredients) == 0 {
+			return c.Redirect("/")
+		}
+
+		// 保存用データの構築
+		record := map[string]interface{}{
+			"Ingredients": ingredients,
+			"TotalItems":  len(ingredients),
+		}
+
+		// 認証済みクライアントの取得
+		var client *http.Client
+		if rawToken := sess.Get("oauth_token"); rawToken != nil {
+			var token oauth2.Token
+			if err := json.Unmarshal([]byte(rawToken.(string)), &token); err == nil {
+				client = conf.Client(c.Context(), &token)
+			}
+		}
+
+		if client == nil {
+			return c.Status(401).SendString("履歴の保存にはログインが必要です")
+		}
+
+		if err := services.SaveMealHistory(c.Context(), client, record); err != nil {
+			log.Printf("[ERROR] Failed to save meal history: %v", err)
+			return c.Status(500).SendString("履歴の保存に失敗しました")
+		}
+
+		// 保存後はリストをクリアする（任意）
+		sess.Delete("ingredients")
+		sess.Save()
+
 		return c.Redirect("/")
 	})
 
@@ -375,7 +483,7 @@ func main() {
 		data, _ := json.Marshal(newList)
 		sess.Set("ingredients", string(data))
 		sess.Save()
-		return c.Redirect("/")
+		return c.Redirect(c.Get("Referer", "/"))
 	})
 
 	// 詳細画面などは foodHandler に委譲可能

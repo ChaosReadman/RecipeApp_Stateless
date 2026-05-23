@@ -1,18 +1,54 @@
+<script>
+    // <html>要素に明示的にダークテーマを設定
+    document.documentElement.setAttribute('data-theme', 'dark');
+</script>
+
+<style>
+    /* Pico.cssの変数が読み込まれる前や、上書きが効かない場合に備えて直接指定 */
+    html, 
+    body {
+        background-color: #11191f !important; /* Pico Dark標準の背景色 */
+        color: #bbc6ce !important;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* カード（article）の背景色も他画面のダークモードに合わせる */
+    article {
+        background-color: #1a232e !important;
+        border: 1px solid #243342 !important;
+    }
+
+    /* 材料リストのテーブルヘッダーを少し目立たせる */
+    table.striped thead th {
+        background-color: #243342 !important;
+    }
+</style>
+
+<main class="container" data-theme="dark">
 <nav aria-label="breadcrumb">
     <ul>
         <li><a href="/">トップ</a></li>
-        <li>レシピ詳細</li>
+        <li>レシピ詳細（調理モード）</li>
     </ul>
 </nav>
 
 <header>
     <div style="display: flex; justify-content: space-between; align-items: center;">
         <h1>{{.Recipe.Title}}</h1>
-        {{if .IsOwner}}
-        <a href="/recipe/{{.Recipe.ID}}/edit" role="button" class="secondary">編集する</a>
-        {{end}}
+        <a href="/recipe/{{.Recipe.ID}}/edit" role="button" class="secondary outline" style="font-size: 0.8rem; padding: 0.5rem 1rem;">このレシピを編集する</a>
     </div>
     <p>{{.Recipe.Description}}</p>
+
+    <!-- 作り替え：分量セレクターをよりPico.cssらしく -->
+    <article style="margin-bottom: var(--pico-spacing);">
+        <div class="grid" style="align-items: center; grid-template-columns: auto 1fr auto;">
+            <label for="servings" style="margin-bottom: 0;"><strong>作りたい分量:</strong></label>
+            <input type="number" id="servings" value="1" min="0.1" step="0.1" style="margin-bottom: 0;" oninput="updateQuantities()">
+            <span style="white-space: nowrap;">人分</span>
+            <div></div> <!-- 余白調整用 -->
+        </div>
+    </article>
 </header>
 
 <div class="grid">
@@ -23,8 +59,12 @@
                 <tbody>
                     {{range .Recipe.Ingredients}}
                     <tr>
-                        <td>{{if .GroupName}}<small>[{{.GroupName}}]</small> {{end}}{{.Name}}</td>
-                        <td style="text-align: right;">{{.Quantity}} g/ml</td>
+                        <td>
+                            {{if .GroupName}}<small>[{{.GroupName}}]</small> {{end}}{{.Name}}
+                        </td>
+                        <td style="text-align: right;">
+                            <span class="qty-val" data-base="{{.Quantity}}">{{.Quantity}}</span> g/ml
+                        </td>
                     </tr>
                     {{end}}
                 </tbody>
@@ -34,10 +74,23 @@
     <div>
         <article>
             <header><strong>作り方</strong></header>
-            {{range .Recipe.Steps}}
-            <p><strong>{{.StepNumber}}.</strong> {{.Instruction}}</p>
-            <hr>
-            {{end}}
+            <div id="steps-list">
+                {{range .Recipe.Steps}}
+                <p><strong>{{.StepNumber}}.</strong> {{.Instruction}}</p>
+                <hr>
+                {{end}}
+            </div>
         </article>
     </div>
 </div>
+</main>
+
+<script>
+function updateQuantities() {
+    const servings = parseFloat(document.getElementById('servings').value) || 1;
+    document.querySelectorAll('.qty-val').forEach(el => {
+        const base = parseFloat(el.getAttribute('data-base')) || 0;
+        el.innerText = (base * servings).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 1});
+    });
+}
+</script>

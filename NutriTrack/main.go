@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -22,15 +21,6 @@ import (
 
 // 全データをそのまま保持する型定義 (APIのレスポンス形式)
 type FoodMap map[string]any
-
-// APIレスポンスのキーをすべて小文字に正規化するヘルパー
-func normalizeKeys(m FoodMap) FoodMap {
-	newMap := make(FoodMap)
-	for k, v := range m {
-		newMap[strings.ToLower(k)] = v
-	}
-	return newMap
-}
 
 // API通信用の共通クライアント（タイムアウトを設定）
 var apiClient = &http.Client{
@@ -52,11 +42,6 @@ type NutrientSummary struct {
 	VitC   float64 `json:"vitamin_c"`
 	Fiber  float64 `json:"fiber"`
 	Salt   float64 `json:"salt"`
-}
-
-var myIngredients = []FoodMap{
-	{"num_id": "01001", "name": "アマランサス　玄穀", "weight": 100.0},
-	{"num_id": "01002", "name": "あわ　精白粒", "weight": 100.0},
 }
 
 // セッションから材料リストを取得するヘルパー
@@ -114,6 +99,10 @@ func main() {
 
 	// テンプレートエンジンの初期化
 	engine := html.New("./views", ".html")
+	engine.AddFunc("json", func(v interface{}) string {
+		a, _ := json.Marshal(v)
+		return string(a)
+	})
 	engine.Reload(true) // 開発用
 
 	app := fiber.New(fiber.Config{
@@ -157,7 +146,7 @@ func main() {
 			// ヘルパー関数: 複数のキーから値を加算。型が何であっても数値として抽出を試みる
 			addVal := func(target *float64, keys ...string) {
 				for _, k := range keys {
-					val, ok := ing[strings.ToLower(k)]
+					val, ok := ing[k]
 					if !ok || val == nil {
 						continue
 					}
@@ -221,7 +210,7 @@ func main() {
 
 		if query != "" {
 			// nutrient-api へのリクエスト
-			apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", url.QueryEscape(query))
+			apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
 			resp, err := apiClient.Get(apiUrl)
 			if err == nil {
 				defer resp.Body.Close()
@@ -234,25 +223,20 @@ func main() {
 						keys = append(keys, k)
 					}
 					log.Printf("[DEBUG] API Response Keys: %v", keys)
-					// 検索結果のキーを正規化
-					for i, f := range foods {
-						foods[i] = normalizeKeys(f)
-					}
 				}
 			}
 		}
 
 		// テンプレートのレンダリング
 		return c.Render("index", fiber.Map{
-			"Title":         "NutriTrack",
-			"Query":         query,
-			"RecipeQuery":   recipeQuery,
-			"Foods":         foods,
-			"Recipes":       recipes,
-			"Ingredients":   ingredients,
-			"Summary":       summary,
-			"MyIngredients": myIngredients,
-			"User":          userName,
+			"Title":       "NutriTrack",
+			"Query":       query,
+			"RecipeQuery": recipeQuery,
+			"Foods":       foods,
+			"Recipes":     recipes,
+			"Ingredients": ingredients,
+			"Summary":     summary,
+			"User":        userName,
 		}, "layout")
 	})
 
@@ -307,7 +291,7 @@ func main() {
 							// ヘルパー関数: 複数のキーから値を加算（計算用）
 							addVal := func(target *float64, ing map[string]interface{}, wRatio float64, keys ...string) {
 								for _, k := range keys {
-									val, ok := ing[strings.ToLower(k)]
+									val, ok := ing[k]
 									if !ok || val == nil {
 										continue
 									}
@@ -335,12 +319,12 @@ func main() {
 									if m, ok := ing.(map[string]interface{}); ok {
 										// 栄養素の再計算のためにAPIから最新データを取得
 										ingID := fmt.Sprintf("%v", m["ID"])
-										apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", url.QueryEscape(ingID))
+										apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
 										resp, err := apiClient.Get(apiUrl)
 										if err == nil {
 											var details []FoodMap
 											if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
-												nutrientData := normalizeKeys(details[0])
+												nutrientData := details[0]
 												weight, _ := m["Quantity"].(float64)
 												if weight == 0 {
 													weight, _ = m["Weight"].(float64)
@@ -449,7 +433,7 @@ func main() {
 			// 詳細な栄養素を取得するためにAPIを叩く
 			var details []FoodMap
 			// APIの仕様(id=)に合わせてリクエスト
-			apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", url.QueryEscape(id))
+			apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", id)
 			log.Printf("[API FETCH] URL: %s", apiUrl)
 			resp, err := apiClient.Get(apiUrl)
 			if err != nil {
@@ -460,7 +444,7 @@ func main() {
 
 			var nutrientData FoodMap
 			if len(details) > 0 {
-				nutrientData = normalizeKeys(details[0]) // キーを正規化して保持
+				nutrientData = details[0]
 				nutrientData["weight"] = weight
 			} else {
 				// データが取得できなかった場合
@@ -568,6 +552,12 @@ func main() {
 	// 詳細画面などは foodHandler に委譲可能
 	app.Get("/food/:id", foodHandler.Detail)
 	app.Get("/calendar", foodHandler.CalendarIndex)
+
+	// カレンダー用レシピ操作
+	app.All("/calendar/recipes/add", foodHandler.AddRecipeToCalendarList)
+	app.All("/calendar/recipes/remove", foodHandler.RemoveRecipeFromCalendarList)
+	app.All("/calendar/add", foodHandler.AddToCalendar)
+	app.Post("/calendar/remove/:id", foodHandler.RemoveFromCalendar)
 
 	// 127.0.0.1:3000 で起動（APIの8080と分ける）
 	port := "3000"

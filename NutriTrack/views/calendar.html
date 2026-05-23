@@ -1,140 +1,227 @@
+<nav aria-label="breadcrumb">
+    <ul>
+        <li><a href="/ingredients/clear">トップ</a></li>
+        <li>食事カレンダー</li>
+    </ul>
+</nav>
+
 <header>
-    <h1>食事カレンダー</h1>
+    <form action="/calendar" method="GET" style="display: flex; gap: 10px; align-items: center;">
+        <label for="date" style="margin: 0;">表示日:</label>
+        <input type="date" id="date" name="date" value="{{.Date}}" onchange="this.form.submit()">
+    </form>
 </header>
 
-<div style="margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; background: var(--pico-card-background-color); padding: 1rem; border-radius: var(--pico-border-radius);">
-    <div style="display: flex; gap: 20px;">
-        <span>摂取: <strong>{{.TotalIntake}}</strong> kcal</span>
-        <span>消費: <strong>{{.BurnedCalories}}</strong> kcal</span>
-        <span>歩数: <strong>{{.Steps}}</strong> 歩</span>
-    </div>
-</div>
-
-<div class="grid">
-    <!-- 食事記録リスト -->
+<div class="recipe-container">
+    <!-- 左カラム: 検索と登録 -->
     <div>
         <article>
-            <header><strong>メニューを探す</strong></header>
-            <div style="margin-bottom: 1rem; display: flex; gap: 20px;">
-                <label>
-                    <input type="radio" name="search_scope" value="my" checked> マイレシピ
-                </label>
-                <label>
-                    <input type="radio" name="search_scope" value="all"> 全レシピ
-                </label>
-            </div>
-            <div style="display: flex; gap: 10px; margin-bottom: 1rem;">
-                <input type="text" id="recipe-search-q" placeholder="レシピ名で検索...">
-                <button type="button" class="contrast" onclick="searchRecipes()">検索</button>
-            </div>
-            <div id="recipe-search-results" style="max-height: 200px; overflow-y: auto;">
-                <p><small>条件を入力して検索してください</small></p>
-            </div>
-        </article>
-    </div>
-
-    <!-- メニュー登録フォーム -->
-    <div>
-        <article>
-            <header><strong>日付の選択</strong></header>
-            <form action="/calendar" method="GET" style="margin-bottom: 0;">
-                <input type="date" name="date" value="{{.Date}}" onchange="this.form.submit()">
+            <header><strong>レシピを検索して追加</strong></header>
+            <form action="/calendar" method="GET" style="display: flex; gap: 10px;">
+                <input type="hidden" name="date" value="{{.Date}}">
+                <input type="hidden" name="meal_type" class="sync-mt">
+                <input type="hidden" name="entry_time" class="sync-et">
+                <input type="search" name="rq" placeholder="レシピ名で検索..." value="{{.RecipeQuery}}">
+                <button type="submit" class="outline">検索</button>
             </form>
-        </article>
 
-        <article>
-            <header><strong>記録済みメニュー</strong></header>
-            {{if .Entries}}
-                {{range .Entries}}
-                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding: 8px 0;">
-                    <div>
-                        <mark style="font-size: 0.8rem;">
-                            {{if eq .MealType "breakfast"}}朝食{{else if eq .MealType "lunch"}}昼食{{else if eq .MealType "dinner"}}夕食{{else}}間食{{end}}
-                        </mark>
-                        <span style="font-size: 0.8rem; margin-left: 5px; color: #666;">{{.EntryTime}}</span>
-                        <a href="/recipe/{{.RecipeID}}" style="margin-left: 8px; font-size: 0.9rem;">{{.Title}}</a>
-                        {{if .IsSynced}}
-                            <small style="color: #4caf50; margin-left: 5px;">✓ Synced</small>
-                        {{end}}
-                    </div>
-                    <!-- 削除ボタン（✕）を追加 -->
-                    <form action="/calendar/remove/{{.ID}}" method="POST" style="margin: 0;">
-                        <button type="submit" class="outline secondary" style="padding: 2px 8px; font-size: 0.7rem; border: none; margin: 0; line-height: 1;">✕</button>
-                    </form>
-                </div>
-                {{end}}
-            {{else}}
-                <p><small>この日の記録はまだありません。</small></p>
+            {{if .Recipes}}
+            <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--pico-muted-border-color); padding: 10px; border-radius: var(--pico-border-radius);">
+                <table style="margin: 0; font-size: 0.9rem;">
+                    {{range .Recipes}}
+                    <tr class="recipe-row" data-summary='{{.Summary | json}}' style="cursor: pointer;" onclick="this.querySelector('input[type=radio]').click()">
+                        <td style="width: 40px;"><input type="radio" name="recipe_select" onchange="updateRecipeChart(this)" onclick="event.stopPropagation()"></td>
+                        <td>{{.Title}}</td>
+                        <td style="text-align: right;">
+                            <form action="/calendar/recipes/add" method="POST" style="margin: 0;">
+                                <input type="hidden" name="id" value="{{.ID}}">
+                                <input type="hidden" name="name" value="{{.Title}}">
+                                <input type="hidden" name="meal_type" class="sync-mt">
+                                <input type="hidden" name="entry_time" class="sync-et">
+                                <button type="submit" class="outline" style="padding: 2px 8px;">追加</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {{end}}
+                </table>
+            </div>
             {{end}}
         </article>
 
         <article>
             <header><strong>メニューを登録する</strong></header>
-            <form action="/calendar/add" method="POST" id="calendar-add-form">
+            <!-- 選択されたレシピの表示エリア -->
+            {{if .SelectedRecipes}}
+            <ul style="list-style: none; padding: 0; margin-bottom: 1rem;">
+                {{range .SelectedRecipes}}
+                <li class="selected-recipe-item" data-summary='{{.Summary | json}}' style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--pico-muted-border-color);">
+                    <label style="margin: 0; display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" checked onchange="updateMealChart()" class="meal-check"> {{.name}}
+                    </label>
+                    <form action="/calendar/recipes/remove" method="POST" style="margin: 0;">
+                        <input type="hidden" name="id" value="{{.id}}">
+                        <input type="hidden" name="meal_type" class="sync-mt">
+                        <input type="hidden" name="entry_time" class="sync-et">
+                        <button type="submit" class="outline secondary" style="padding: 0 5px; font-size: 0.8rem; border: none;">✕</button>
+                    </form>
+                </li>
+                {{end}}
+            </ul>
+            {{else}}
+            <p><small>レシピが選択されていません</small></p>
+            {{end}}
+
+            <form action="/calendar/add" method="POST">
                 <input type="hidden" name="date" value="{{.Date}}">
-                
-                <label for="meal_type">食事区分</label>
-                <select name="meal_type" id="meal-type-select" required onchange="updateDefaultTime()">
-                    <option value="breakfast">朝食</option>
-                    <option value="lunch" selected>昼食</option>
-                    <option value="dinner">夕食</option>
-                    <option value="snack">間食</option>
-                </select>
-
-                <label for="entry_time">時刻</label>
-                <input type="time" name="entry_time" id="entry-time-input" value="12:00" required>
-
-                <button type="submit">カレンダーに追加</button>
+                <div class="grid">
+                    <select name="meal_type" id="meal_type" required onchange="updateDefaultTime(); syncState()">
+                        <option value="朝食" {{if eq .MealType "朝食"}}selected{{end}}>朝食</option>
+                        <option value="昼食" {{if or (eq .MealType "昼食") (not .MealType)}}selected{{end}}>昼食</option>
+                        <option value="夕食" {{if eq .MealType "夕食"}}selected{{end}}>夕食</option>
+                        <option value="間食" {{if eq .MealType "間食"}}selected{{end}}>間食</option>
+                    </select>
+                    <input type="time" name="entry_time" id="entry_time" value="{{if .EntryTime}}{{.EntryTime}}{{else}}12:00{{end}}" onchange="syncState()">
+                </div>
+                <button type="submit" style="width: 100%;" {{if not .SelectedRecipes}}disabled{{end}}>カレンダーに記録</button>
             </form>
         </article>
+
+        <article>
+            <header><strong>{{.Date}} の食事履歴</strong></header>
+            {{range .Entries}}
+            <div class="history-item" data-summary='{{.Summary | json}}' style="padding: 0.5rem; border-bottom: 1px solid var(--pico-muted-border-color); display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" checked onchange="updateDayChart()" class="day-check">
+                    <div>
+                        <strong>{{.MealType}}</strong>: 
+                        {{range .Recipes}}{{.name}} {{end}} 
+                        ({{.Summary.energy | printf "%.0f"}} kcal)
+                    </div>
+                </div>
+                <form action="/calendar/remove/{{.Timestamp}}?date={{$.Date}}" method="POST" style="margin: 0;">
+                    <button type="submit" class="outline secondary" style="padding: 2px 8px; font-size: 0.8rem; border: none; margin: 0;">✕</button>
+                </form>
+            </div>
+            {{else}}
+            <p><small>この日の記録はありません</small></p>
+            {{end}}
+        </article>
     </div>
+
+    <!-- 右カラム: 栄養バランス -->
+    <aside>
+        <article style="padding: 10px; margin-bottom: 1rem;">
+            <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>1. レシピ単体 (1食目安)</strong></header>
+            <canvas id="chartRecipe" height="200"></canvas>
+        </article>
+        <article style="padding: 10px; margin-bottom: 1rem;">
+            <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>2. 今回の１食分合計</strong></header>
+            <canvas id="chartMeal" height="200"></canvas>
+        </article>
+        <article style="padding: 10px;">
+            <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>3. 今日の１日分合計</strong></header>
+            <canvas id="chartDay" height="200"></canvas>
+        </article>
+    </aside>
 </div>
 
 <script>
-async function searchRecipes() {
-    const q = document.getElementById('recipe-search-q').value;
-    const scope = document.querySelector('input[name="search_scope"]:checked').value;
-    
-    const res = await fetch(`/api/recipes/search?q=${encodeURIComponent(q)}&scope=${scope}`);
-    const recipes = await res.json();
-    
-    const resultsDiv = document.getElementById('recipe-search-results');
-    if (recipes.length === 0) {
-        resultsDiv.innerHTML = '<p><small>該当するレシピがありません</small></p>';
-        return;
-    }
-
-    resultsDiv.innerHTML = recipes.map(r => `
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
-            <input type="checkbox" name="recipe_ids" value="${r.ID}" form="calendar-add-form">
-            <label style="margin:0; font-size: 0.9rem;">${r.Title}</label>
-        </div>
-    `).join('');
+function syncState() {
+    const mt = document.getElementById('meal_type').value;
+    const et = document.getElementById('entry_time').value;
+    document.querySelectorAll('.sync-mt').forEach(el => el.value = mt);
+    document.querySelectorAll('.sync-et').forEach(el => el.value = et);
 }
 
 function updateDefaultTime() {
-    const mealType = document.getElementById('meal-type-select').value;
-    const timeInput = document.getElementById('entry-time-input');
+    const mealType = document.getElementById('meal_type').value;
+    const timeInput = document.getElementById('entry_time');
     
     switch(mealType) {
-        case 'breakfast':
-            timeInput.value = '08:00';
+        case '朝食':
+            timeInput.value = '07:00';
             break;
-        case 'lunch':
+        case '昼食':
             timeInput.value = '12:00';
             break;
-        case 'dinner':
-            timeInput.value = '18:00';
+        case '夕食':
+            timeInput.value = '18:30';
             break;
-        case 'snack':
+        case '間食':
             const now = new Date();
             const hours = String(now.getHours()).padStart(2, '0');
             const minutes = String(now.getMinutes()).padStart(2, '0');
             timeInput.value = `${hours}:${minutes}`;
             break;
     }
+    syncState();
 }
 
-// 初期ロード時にも適切な値をセットしたい場合は以下を有効化
-// window.addEventListener('DOMContentLoaded', updateDefaultTime);
+// 初期化処理を統合
+window.addEventListener('load', () => {
+    syncState();
+    updateMealChart();
+    updateDayChart();
+});
+
+const labels = ['エネルギー', 'たんぱく質', '脂質', '炭水化物', 'カリウム', 'カルシウム', '鉄', '亜鉛', 'ビタミンA', 'ビタミンB', 'ビタミンC', '食物繊維', '食塩'];
+const targets = [700, 20, 20, 100, 800, 200, 2.5, 3.0, 250, 0.4, 33, 6, 2.5]; 
+
+function createRadar(id) {
+    return new Chart(document.getElementById(id), {
+        type: 'radar',
+        data: {
+            labels: labels,
+            datasets: [{ data: new Array(13).fill(0), backgroundColor: 'rgba(54, 162, 235, 0.2)', borderColor: 'rgb(54, 162, 235)' }]
+        },
+        options: {
+            animation: false,
+            scales: { r: { suggestedMin: 0, suggestedMax: 100, ticks: { display: false } } },
+            plugins: { legend: { display: false } }
+        }
+    });
+}
+
+const chartRecipe = createRadar('chartRecipe');
+const chartMeal = createRadar('chartMeal');
+const chartDay = createRadar('chartDay');
+
+function updateChartData(chart, summary, isDay = false) {
+    const multiplier = isDay ? 3 : 1;
+    const data = [
+        summary.energy, summary.protein, summary.fat, summary.carbohydrate,
+        summary.potassium, summary.calcium, summary.iron, summary.zinc,
+        summary.vitamin_a, summary.vitamin_b, summary.vitamin_c, summary.fiber, summary.salt
+    ].map((val, i) => Math.min(((val || 0) / (targets[i] * multiplier)) * 100, 120));
+    chart.data.datasets[0].data = data;
+    chart.update();
+}
+
+function updateRecipeChart(radio) {
+    const row = radio.closest('.recipe-row');
+    const summary = JSON.parse(row.dataset.summary);
+    updateChartData(chartRecipe, summary);
+}
+
+function updateMealChart() {
+    const total = { energy:0, protein:0, fat:0, carbohydrate:0, potassium:0, calcium:0, iron:0, zinc:0, vitamin_a:0, vitamin_b:0, vitamin_c:0, fiber:0, salt:0 };
+    document.querySelectorAll('.selected-recipe-item').forEach(item => {
+        if (item.querySelector('.meal-check').checked) {
+            const s = JSON.parse(item.dataset.summary);
+            for (let k in total) total[k] += (s[k] || 0);
+        }
+    });
+    updateChartData(chartMeal, total);
+}
+
+function updateDayChart() {
+    const total = { energy:0, protein:0, fat:0, carbohydrate:0, potassium:0, calcium:0, iron:0, zinc:0, vitamin_a:0, vitamin_b:0, vitamin_c:0, fiber:0, salt:0 };
+    document.querySelectorAll('.history-item').forEach(item => {
+        if (item.querySelector('.day-check').checked) {
+            const s = JSON.parse(item.dataset.summary);
+            for (let k in total) total[k] += (s[k] || 0);
+        }
+    });
+    updateChartData(chartDay, total, true);
+}
 </script>

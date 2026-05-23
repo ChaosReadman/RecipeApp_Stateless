@@ -17,7 +17,7 @@ import (
 
 const (
 	RecipesFile     = "recipes.json"
-	MealHistoryFile = "meal_history.json"
+	MealHistoryFile = "Calendar.json"
 )
 
 var mu sync.Mutex
@@ -234,6 +234,41 @@ func FetchRecipes(ctx context.Context, client *http.Client, spreadsheetId, query
 	return filtered, nil
 }
 
+// FetchMealHistory は Calendar.json から全履歴を取得します
+func FetchMealHistory(ctx context.Context, client *http.Client) ([]map[string]interface{}, error) {
+	if client == nil {
+		return nil, errors.New("client is nil")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+
+	srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		return nil, err
+	}
+
+	folderID, err := getOrCreateFolder(srv, "NutriTrack")
+	if err != nil {
+		return nil, err
+	}
+
+	fileID, err := getOrCreateFile(srv, folderID, MealHistoryFile)
+	if err != nil {
+		return nil, err
+	}
+
+	var history []map[string]interface{}
+	if err := downloadJSON(srv, fileID, &history); err != nil {
+		// ファイルが空の場合は空配列を返す
+		if strings.Contains(err.Error(), "unexpected end of JSON input") {
+			return []map[string]interface{}{}, nil
+		}
+		return nil, err
+	}
+
+	return history, nil
+}
+
 // SaveMealHistory は食事記録を meal_history.json に保存します
 func SaveMealHistory(ctx context.Context, client *http.Client, record map[string]interface{}) error {
 	mu.Lock()
@@ -257,8 +292,52 @@ func SaveMealHistory(ctx context.Context, client *http.Client, record map[string
 	var history []map[string]interface{}
 	downloadJSON(srv, fileID, &history)
 
-	record["Timestamp"] = time.Now().Format(time.RFC3339)
+	// 指定されたTimestampがない場合のみ、現在の時刻をセットする
+	if _, exists := record["Timestamp"]; !exists {
+		record["Timestamp"] = time.Now().Format(time.RFC3339)
+	}
 	history = append(history, record)
 
 	return uploadJSON(srv, fileID, history)
+}
+
+// RemoveMealHistory は Calendar.json から特定のタイムスタンプの記録を削除します
+func RemoveMealHistory(ctx context.Context, client *http.Client, timestamp string) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		return err
+	}
+
+	folderID, err := getOrCreateFolder(srv, "NutriTrack")
+	if err != nil {
+		return err
+	}
+
+	fileID, err := getOrCreateFile(srv, folderID, MealHistoryFile)
+	if err != nil {
+		return err
+	}
+
+	var history []map[string]interface{}
+	if err := downloadJSON(srv, fileID, &history); err != nil {
+		return err
+	}
+
+	// タイムスタンプが一致しないものだけを残す（フィルタリング）
+	newHistory := []map[string]interface{}{}
+	for _, record := range history {
+		if ts, ok := record["Timestamp"].(string); ok && ts == timestamp {
+			continue // 削除対象
+		}
+		newHistory = append(newHistory, record)
+	}
+
+	if len(history) == len(newHistory) {
+		return errors.New("record not found")
+	}
+
+	return uploadJSON(srv, fileID, newHistory)
 }

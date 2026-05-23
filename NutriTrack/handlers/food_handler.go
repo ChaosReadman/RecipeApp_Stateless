@@ -11,7 +11,6 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -127,6 +126,48 @@ func (h *FoodHandler) Detail(c *fiber.Ctx) error {
 	}, "layout")
 }
 
+// addNutrientsToSummary は栄養素をサマリーに加算する共通ヘルパー
+func (h *FoodHandler) addNutrientsToSummary(target *NutrientSummary, data map[string]interface{}, ratio float64) {
+	getVal := func(keys ...string) float64 {
+		for _, k := range keys {
+			if val, ok := data[k]; ok && val != nil {
+				switch v := val.(type) {
+				case float64:
+					return v
+				case int64:
+					return float64(v)
+				case string:
+					cleaned := strings.TrimSpace(v)
+					if cleaned == "-" || cleaned == "Tr" || cleaned == "(0)" {
+						return 0
+					}
+					f, _ := strconv.ParseFloat(cleaned, 64)
+					return f
+				}
+			}
+		}
+		return 0
+	}
+	target.Energy += getVal("enerc_kcal", "enerc") * ratio
+	target.Prot += getVal("prot_", "prot", "protein") * ratio
+	target.Fat += getVal("fat_", "fat") * ratio
+	target.Cho += getVal("choavl", "chocdf", "cho") * ratio
+	target.K += getVal("k", "potassium") * ratio
+	target.Ca += getVal("ca", "calcium") * ratio
+	target.Fe += getVal("fe", "iron") * ratio
+	target.Zn += getVal("zn", "zinc") * ratio
+	target.VitA += getVal("vita_rae", "vita") * ratio
+	target.VitB += getVal("thia", "vitb1") * ratio
+	target.VitC += getVal("vitc", "vitamin_c") * ratio
+	target.Fiber += getVal("fib_", "fibtg", "fiber") * ratio
+
+	salt := getVal("nacl_eq", "salt")
+	if salt == 0 {
+		salt = getVal("na", "sodium") * 2.54 / 1000.0
+	}
+	target.Salt += salt * ratio
+}
+
 // AddIngredient は材料リストにアイテムを追加します
 func (h *FoodHandler) AddIngredient(c *fiber.Ctx) error {
 	id := c.FormValue("id")
@@ -223,7 +264,7 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 	summary := NutrientSummary{}
 	addVal := func(target *float64, data map[string]interface{}, wRatio float64, keys ...string) {
 		for _, k := range keys {
-			if val, ok := data[strings.ToLower(k)]; ok && val != nil {
+			if val, ok := data[k]; ok && val != nil {
 				var fVal float64
 				switch v := val.(type) {
 				case float64:
@@ -244,15 +285,12 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 
 	// 現在のセッション材料からチャート用に計算
 	for _, ing := range ingredients {
-		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", url.QueryEscape(ing.ID))
+		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ing.ID)
 		resp, err := http.Get(apiUrl)
 		if err == nil {
 			var details []map[string]interface{}
 			if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
-				data := make(map[string]interface{})
-				for k, v := range details[0] {
-					data[strings.ToLower(k)] = v
-				}
+				data := details[0]
 				wRatio := ing.Weight / 100.0
 				addVal(&summary.Energy, data, wRatio, "enerc_kcal", "enerc")
 				addVal(&summary.Prot, data, wRatio, "prot_", "prot", "protein")
@@ -290,7 +328,7 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 func (h *FoodHandler) CreateRecipe(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
 	userID, _ := sess.Get("user_id").(string)
-	print(userID)
+	log.Printf("[DEBUG] CreateRecipe: UserID=%s", userID)
 	rawToken := sess.Get("oauth_token")
 
 	if rawToken == nil {
@@ -449,7 +487,7 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 	summary := NutrientSummary{}
 	addVal := func(target *float64, data map[string]interface{}, wRatio float64, keys ...string) {
 		for _, k := range keys {
-			if val, ok := data[strings.ToLower(k)]; ok && val != nil {
+			if val, ok := data[k]; ok && val != nil {
 				var fVal float64
 				switch v := val.(type) {
 				case float64:
@@ -482,10 +520,7 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 				if err == nil {
 					var details []map[string]interface{}
 					if decodeErr := json.NewDecoder(resp.Body).Decode(&details); decodeErr == nil && len(details) > 0 {
-						data := make(map[string]interface{})
-						for k, v := range details[0] {
-							data[strings.ToLower(k)] = v
-						}
+						data := details[0]
 
 						qty, _ := ing["Quantity"].(float64)
 						if qty == 0 {
@@ -551,15 +586,6 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 		"MyIngredients": h.getMyIngredients(c),
 		"IsRecipePage":  true,
 	}, "layout")
-}
-
-// キー正規化のヘルパー
-func normalizeKeysForMap(m map[string]interface{}) map[string]interface{} {
-	newMap := make(map[string]interface{})
-	for k, v := range m {
-		newMap[strings.ToLower(k)] = v
-	}
-	return newMap
 }
 
 // UpdateRecipe はレシピを更新します
@@ -666,6 +692,18 @@ func (h *FoodHandler) getMyIngredients(c *fiber.Ctx) []models.Food {
 	return myIngredients
 }
 
+// getSelectedRecipes はセッションから選択中のレシピを取得するヘルパーです
+func (h *FoodHandler) getSelectedRecipes(c *fiber.Ctx) []map[string]string {
+	sess, _ := h.Store.Get(c)
+	var recipes []map[string]string
+	if raw := sess.Get("calendar_recipes"); raw != nil {
+		if err := json.Unmarshal([]byte(raw.(string)), &recipes); err != nil {
+			log.Printf("[ERROR] Failed to unmarshal calendar_recipes: %v", err)
+		}
+	}
+	return recipes
+}
+
 // CalendarIndex はカレンダー画面を表示します
 func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
@@ -674,66 +712,333 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 	if !ok {
 		return c.Redirect("/login")
 	}
-	print(userID)
+	log.Printf("[DEBUG] CalendarIndex: UserID=%s", userID)
 
-	// 日付の取得（クエリになければ今日）
 	dateStr := c.Query("date")
+	recipeQuery := c.Query("rq")
 	if dateStr == "" {
 		dateStr = time.Now().Format("2006-01-02")
 	}
 
-	// TODO: スプレッドシートからカレンダー情報を取得
-	entries := []models.CalendarEntryDetail{}
+	// Google Drive から履歴を取得
+	var entries []map[string]interface{}
+	recipes := []map[string]interface{}{}
 	totalCalories := 0.0
-	externalCalories := 0
-	log.Printf("CalendarIndex (WIP): Fetching for %s", dateStr)
+	selectedSummary := NutrientSummary{}
+	steps := 0
+	burned := 0
+	healthSynced := false
+	var spreadsheetId string
 
-	// TODO: スプレッドシートまたはFitから取得
-	steps, burned, healthSynced := 0, 0, false
-	// steps, burned, healthSynced := models.GetDailyHealthData(h.DB, userID, dateStr)
+	if rawToken := sess.Get("oauth_token"); rawToken != nil {
+		var token oauth2.Token
+		json.Unmarshal([]byte(rawToken.(string)), &token)
+		client := h.OAuthConfig.Client(context.Background(), &token)
 
-	return c.Render("calendar", fiber.Map{
-		"Title":                "食事カレンダー",
-		"User":                 user,
-		"Date":                 dateStr,
-		"Entries":              entries,
-		"TotalIntake":          int(totalCalories) + externalCalories,
-		"BurnedCalories":       burned,
-		"Steps":                steps,
-		"HealthSynced":         healthSynced,
-		"HideIngredientDrawer": true, // これにより小窓が非表示になります
-		"Ingredients":          h.getIngredientsFromSession(c),
-		"MyIngredients":        h.getMyIngredients(c),
-	}, "layout")
+		// 1. 食事履歴の取得
+		history, err := services.FetchMealHistory(c.Context(), client)
+		if err == nil {
+			for _, record := range history {
+				ts, _ := record["Timestamp"].(string)
+				if strings.HasPrefix(ts, dateStr) {
+					entries = append(entries, record)
+					if summ, ok := record["Summary"].(map[string]interface{}); ok {
+						cal, _ := summ["energy"].(float64)
+						totalCalories += cal
+					}
+				}
+			}
+		}
+
+		// 2. レシピ検索処理
+		spreadsheetId, _ = services.GetOrCreateRecipeSpreadsheet(c.Context(), client)
+		data, err := services.FetchRecipes(c.Context(), client, spreadsheetId, recipeQuery)
+		if err == nil {
+			// 各検索結果レシピの栄養素を計算 (チャート1用)
+			for _, r := range data {
+				summ := NutrientSummary{}
+				if ings, ok := r["Ingredients"].([]interface{}); ok {
+					for _, rawIng := range ings {
+						if ing, ok := rawIng.(map[string]interface{}); ok {
+							ingID := fmt.Sprintf("%v", ing["ID"])
+							u := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
+							if resp, err := http.Get(u); err == nil {
+								var details []map[string]interface{}
+								if de := json.NewDecoder(resp.Body).Decode(&details); de == nil && len(details) > 0 {
+									d := details[0]
+									qty, ok := ing["Quantity"].(float64)
+									if !ok {
+										qty, _ = ing["Weight"].(float64)
+									}
+									h.addNutrientsToSummary(&summ, d, qty/100.0)
+								}
+								resp.Body.Close()
+							}
+						}
+					}
+				}
+				r["Summary"] = summ
+				recipes = append(recipes, r)
+			}
+		}
+
+		// 3. 選択中レシピの栄養素計算
+		selectedRecipesRaw := h.getSelectedRecipes(c)
+		enrichedSelectedRecipes := []map[string]interface{}{}
+		if len(selectedRecipesRaw) > 0 {
+			// 全レシピを取得してマップ化
+			recipeMap := make(map[string]map[string]interface{})
+			allRecipes, _ := services.FetchRecipes(c.Context(), client, spreadsheetId, "")
+			for _, r := range allRecipes {
+				recipeMap[fmt.Sprintf("%v", r["ID"])] = r
+			}
+
+			for _, sr := range selectedRecipesRaw {
+				itemSummary := NutrientSummary{}
+				recipeID := sr["id"]
+				recipeName := sr["name"]
+
+				if r, ok := recipeMap[recipeID]; ok {
+					if ings, ok := r["Ingredients"].([]interface{}); ok {
+						for _, rawIng := range ings {
+							if ing, ok := rawIng.(map[string]interface{}); ok {
+								// 最新栄養素を取得
+								u := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", fmt.Sprintf("%v", ing["ID"]))
+								if resp, err := http.Get(u); err == nil {
+									var details []map[string]interface{}
+									if de := json.NewDecoder(resp.Body).Decode(&details); de == nil && len(details) > 0 {
+										data := details[0]
+										qty, ok := ing["Quantity"].(float64)
+										if !ok {
+											qty, _ = ing["Weight"].(float64)
+										}
+										h.addNutrientsToSummary(&itemSummary, data, qty/100.0)
+										h.addNutrientsToSummary(&selectedSummary, data, qty/100.0)
+									}
+									resp.Body.Close()
+								}
+							}
+						}
+					}
+				}
+				enrichedSelectedRecipes = append(enrichedSelectedRecipes, map[string]interface{}{
+					"id":      recipeID,
+					"name":    recipeName,
+					"Summary": itemSummary,
+				})
+			}
+		}
+
+		return c.Render("calendar", fiber.Map{
+			"Title":                "食事カレンダー",
+			"User":                 user,
+			"Date":                 dateStr,
+			"Entries":              entries,
+			"Recipes":              recipes,
+			"SelectedRecipes":      enrichedSelectedRecipes,
+			"SelectedSummary":      selectedSummary,
+			"RecipeQuery":          recipeQuery,
+			"TotalIntake":          int(totalCalories),
+			"BurnedCalories":       burned,
+			"Steps":                steps,
+			"HealthSynced":         healthSynced,
+			"HideIngredientDrawer": true,
+			"Ingredients":          h.getIngredientsFromSession(c),
+		}, "layout")
+	}
+
+	return c.Redirect("/login")
+}
+
+// AddRecipeToCalendarList はカレンダー登録待ちリストにレシピを追加します
+func (h *FoodHandler) AddRecipeToCalendarList(c *fiber.Ctx) error {
+	// FiberのFormValueはQueryとBodyの両方をチェックするため、GET/POSTどちらでも対応可能
+	id := c.FormValue("id")
+	name := c.FormValue("name")
+
+	sess, _ := h.Store.Get(c)
+	var recipes []map[string]string
+	if raw := sess.Get("calendar_recipes"); raw != nil {
+		json.Unmarshal([]byte(raw.(string)), &recipes)
+	}
+
+	// 重複チェック
+	for _, r := range recipes {
+		if r["id"] == id {
+			return c.Redirect(c.Get("Referer", "/calendar"))
+		}
+	}
+
+	recipes = append(recipes, map[string]string{"id": id, "name": name})
+	data, _ := json.Marshal(recipes)
+	sess.Set("calendar_recipes", string(data))
+	sess.Save()
+
+	return c.Redirect(c.Get("Referer", "/calendar"))
+}
+
+// RemoveRecipeFromCalendarList はカレンダー登録待ちリストからレシピを削除します
+func (h *FoodHandler) RemoveRecipeFromCalendarList(c *fiber.Ctx) error {
+	id := c.FormValue("id")
+	sess, _ := h.Store.Get(c)
+
+	var recipes []map[string]string
+	if raw := sess.Get("calendar_recipes"); raw != nil {
+		json.Unmarshal([]byte(raw.(string)), &recipes)
+	}
+
+	newRecipes := []map[string]string{}
+	for _, r := range recipes {
+		if r["id"] != id {
+			newRecipes = append(newRecipes, r)
+		}
+	}
+
+	if len(newRecipes) == 0 {
+		sess.Delete("calendar_recipes")
+	} else {
+		data, _ := json.Marshal(newRecipes)
+		sess.Set("calendar_recipes", string(data))
+	}
+	sess.Save()
+
+	return c.Redirect(c.Get("Referer", "/calendar"))
 }
 
 // AddToCalendar はレシピをカレンダーに登録します
 func (h *FoodHandler) AddToCalendar(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
-	userID, ok := sess.Get("user_id").(string)
-	if !ok {
-		return c.Redirect("/login")
+	rawToken := sess.Get("oauth_token")
+	if rawToken == nil {
+		return c.Status(401).SendString("認証が必要です")
 	}
 
 	mealType := c.FormValue("meal_type")   // breakfast, lunch, dinner
 	date := c.FormValue("date")            // YYYY-MM-DD
 	entryTime := c.FormValue("entry_time") // HH:mm
 
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+
 	// 間食の場合で時刻が空なら、日本時間の現在時刻をセットする
 	if entryTime == "" && mealType == "snack" {
 		entryTime = time.Now().In(time.FixedZone("Asia/Tokyo", 9*60*60)).Format("15:04")
+	} else if entryTime == "" {
+		entryTime = "12:00"
 	}
 
-	// 複数の recipe_ids を取得
-	recipeIDs := c.Request().PostArgs().PeekMulti("recipe_ids")
-
-	// TODO: スプレッドシートへの保存ロジック
-	for _, idByte := range recipeIDs {
-		recipeID := string(idByte)
-		log.Printf("AddToCalendar (WIP): User %s added recipe %s for %s", userID, recipeID, mealType)
+	// 1. セッションから登録対象のレシピを取得
+	var selectedRecipes []map[string]string
+	if raw := sess.Get("calendar_recipes"); raw != nil {
+		json.Unmarshal([]byte(raw.(string)), &selectedRecipes)
 	}
 
-	// 健康データの同期フラグのリセットもスプレッドシート等で管理予定
+	if len(selectedRecipes) == 0 {
+		return c.Redirect("/calendar?date=" + date)
+	}
+
+	var token oauth2.Token
+	json.Unmarshal([]byte(rawToken.(string)), &token)
+	client := h.OAuthConfig.Client(context.Background(), &token)
+
+	// 2. 登録する全レシピの合計栄養素を計算
+	summary := NutrientSummary{}
+	allRecipes, err := services.FetchRecipes(c.Context(), client, "", "")
+	if err != nil {
+		return c.Status(500).SendString("レシピの取得に失敗しました")
+	}
+
+	recipeMap := make(map[string]map[string]interface{})
+	for _, r := range allRecipes {
+		recipeMap[fmt.Sprintf("%v", r["ID"])] = r
+	}
+
+	// 栄養素加算用ヘルパー
+	addVal := func(target *float64, data map[string]interface{}, wRatio float64, keys ...string) {
+		for _, k := range keys {
+			if val, ok := data[k]; ok && val != nil {
+				var fVal float64
+				switch v := val.(type) {
+				case float64:
+					fVal = v
+				case string:
+					cleaned := strings.TrimSpace(v)
+					if cleaned == "-" || cleaned == "Tr" || cleaned == "(0)" {
+						fVal = 0
+					} else {
+						fVal, _ = strconv.ParseFloat(cleaned, 64)
+					}
+				}
+				*target += fVal * wRatio
+				return
+			}
+		}
+	}
+
+	// 選択されたレシピごとに材料をスキャン
+	for _, sr := range selectedRecipes {
+		if r, ok := recipeMap[sr["id"]]; ok {
+			if ings, ok := r["Ingredients"].([]interface{}); ok {
+				for _, rawIng := range ings {
+					if ing, ok := rawIng.(map[string]interface{}); ok {
+						ingID := fmt.Sprintf("%v", ing["ID"])
+						apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
+						resp, err := http.Get(apiUrl)
+						if err == nil && resp.StatusCode == 200 {
+							var details []map[string]interface{}
+							if err := json.NewDecoder(resp.Body).Decode(&details); err == nil && len(details) > 0 {
+								nutrientData := details[0]
+
+								qty, ok := ing["Quantity"].(float64)
+								if !ok {
+									qty, _ = ing["Weight"].(float64)
+								}
+								wRatio := qty / 100.0
+
+								addVal(&summary.Energy, nutrientData, wRatio, "enerc_kcal", "enerc")
+								addVal(&summary.Prot, nutrientData, wRatio, "prot_", "prot", "protein")
+								addVal(&summary.Fat, nutrientData, wRatio, "fat_", "fat")
+								addVal(&summary.Cho, nutrientData, wRatio, "choavl", "chocdf", "cho")
+								addVal(&summary.K, nutrientData, wRatio, "k", "potassium")
+								addVal(&summary.Ca, nutrientData, wRatio, "ca", "calcium")
+								addVal(&summary.Fe, nutrientData, wRatio, "fe", "iron")
+								addVal(&summary.Zn, nutrientData, wRatio, "zn", "zinc")
+								addVal(&summary.VitA, nutrientData, wRatio, "vita_rae", "vita")
+								addVal(&summary.VitB, nutrientData, wRatio, "thia", "vitb1")
+								addVal(&summary.VitC, nutrientData, wRatio, "vitc", "vitamin_c")
+								addVal(&summary.Fiber, nutrientData, wRatio, "fib_", "fibtg", "fiber")
+
+								var salt float64
+								addVal(&salt, nutrientData, wRatio, "nacl_eq", "salt")
+								if salt == 0 {
+									var na float64
+									addVal(&na, nutrientData, wRatio, "na", "sodium")
+									salt = na * 2.54 / 1000.0
+								}
+								summary.Salt += salt
+							}
+							resp.Body.Close()
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 3. カレンダー用データ構造の構築
+	record := map[string]interface{}{
+		"MealType":  mealType,
+		"Recipes":   selectedRecipes,
+		"Summary":   summary,
+		"Timestamp": date + "T" + entryTime + ":00Z", // RFC3339形式
+	}
+
+	services.SaveMealHistory(c.Context(), client, record)
+
+	// 完了後、セッションをクリア
+	sess.Delete("calendar_recipes")
+	sess.Save()
 
 	return c.Redirect("/calendar?date=" + date)
 }

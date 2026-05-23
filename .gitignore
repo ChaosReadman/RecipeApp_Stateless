@@ -1,3 +1,8 @@
+# 環境変数ファイル（OAuth認証情報を含む）
+.env
+.env.local
+.env.*.local
+
 # 一時フォルダを再帰的に除外
 **/tmp/
 tmp/
@@ -10,4 +15,23 @@ tmp/
 main
 **/main
 
+# Debugバイナリ
 __debug_**
+
+# ホットリロードツール (air) の生成ファイル
+tmp/
+
+# SQLite データベースファイル
+*.db
+*.db-shm
+*.db-wal
+
+# IDEの設定ファイル
+.vscode/launch.json
+.idea/
+
+# MacOS
+.DS_Store
+
+# OS固有ファイル
+Thumbs.db

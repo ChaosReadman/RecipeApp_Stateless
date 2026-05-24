@@ -27,6 +27,19 @@ type FoodHandler struct {
 	OAuthConfig *oauth2.Config
 }
 
+// getAPIBaseURL は環境変数からAPIのベースURLを取得します
+func (h *FoodHandler) getAPIBaseURL() string {
+	host := os.Getenv("API_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := os.Getenv("API_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	return fmt.Sprintf("http://%s:%s", host, port)
+}
+
 // NutrientSummary は合計栄養素を保持する構造体です
 type NutrientSummary struct {
 	Energy float64 `json:"energy"`
@@ -79,7 +92,7 @@ func (h *FoodHandler) Index(c *fiber.Ctx) error {
 	// 食品検索（Nutrient APIを使用）
 	var foods []map[string]interface{}
 	if query != "" {
-		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+		apiUrl := fmt.Sprintf("%s/api/foods/search?q=%s", h.getAPIBaseURL(), query)
 		resp, err := http.Get(apiUrl)
 		if err == nil {
 			defer resp.Body.Close()
@@ -106,7 +119,7 @@ func (h *FoodHandler) Detail(c *fiber.Ctx) error {
 	user := sess.Get("username")
 
 	// Nutrient API から詳細情報を取得
-	apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", id)
+	apiUrl := fmt.Sprintf("%s/api/foods/search?id=%s", h.getAPIBaseURL(), id)
 	resp, err := http.Get(apiUrl)
 	if err != nil || resp.StatusCode != 200 {
 		return c.Status(500).SendString(err.Error())
@@ -195,7 +208,7 @@ func (h *FoodHandler) AddIngredient(c *fiber.Ctx) error {
 func (h *FoodHandler) SearchJSON(c *fiber.Ctx) error {
 	query := c.Query("q")
 	var foods []map[string]interface{}
-	apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+	apiUrl := fmt.Sprintf("%s/api/foods/search?q=%s", h.getAPIBaseURL(), query)
 	resp, err := http.Get(apiUrl)
 	if err == nil {
 		defer resp.Body.Close()
@@ -243,16 +256,12 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
 
-	// 新規作成時は常にクリーンな状態から開始
-	sess.Delete("ingredients")
-	_ = sess.Save()
-
 	ingredients := h.getIngredientsFromSession(c)
 
 	// 検索クエリがある場合は食品を検索
 	var foods []map[string]interface{}
 	if query != "" {
-		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+		apiUrl := fmt.Sprintf("%s/api/foods/search?q=%s", h.getAPIBaseURL(), query)
 		resp, _ := http.Get(apiUrl)
 		if resp != nil {
 			defer resp.Body.Close()
@@ -285,7 +294,7 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 
 	// 現在のセッション材料からチャート用に計算
 	for _, ing := range ingredients {
-		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ing.ID)
+		apiUrl := fmt.Sprintf("%s/api/foods/search?id=%s", h.getAPIBaseURL(), ing.ID)
 		resp, err := http.Get(apiUrl)
 		if err == nil {
 			var details []map[string]interface{}
@@ -477,7 +486,7 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 	// 検索クエリがある場合は食品を検索
 	var foods []map[string]interface{}
 	if query != "" {
-		apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+		apiUrl := fmt.Sprintf("%s/api/foods/search?q=%s", h.getAPIBaseURL(), query)
 		resp, _ := http.Get(apiUrl)
 		defer resp.Body.Close()
 		json.NewDecoder(resp.Body).Decode(&foods)
@@ -515,7 +524,7 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 			if ing, ok := rawIng.(map[string]interface{}); ok {
 				// APIから栄養素を取得
 				ingID := fmt.Sprintf("%v", ing["ID"])
-				apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
+				apiUrl := fmt.Sprintf("%s/api/foods/search?id=%s", h.getAPIBaseURL(), ingID)
 				resp, err := http.Get(apiUrl)
 				if err == nil {
 					var details []map[string]interface{}
@@ -761,7 +770,7 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 					for _, rawIng := range ings {
 						if ing, ok := rawIng.(map[string]interface{}); ok {
 							ingID := fmt.Sprintf("%v", ing["ID"])
-							u := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
+							u := fmt.Sprintf("%s/api/foods/search?id=%s", h.getAPIBaseURL(), ingID)
 							if resp, err := http.Get(u); err == nil {
 								var details []map[string]interface{}
 								if de := json.NewDecoder(resp.Body).Decode(&details); de == nil && len(details) > 0 {
@@ -803,7 +812,7 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 						for _, rawIng := range ings {
 							if ing, ok := rawIng.(map[string]interface{}); ok {
 								// 最新栄養素を取得
-								u := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", fmt.Sprintf("%v", ing["ID"]))
+								u := fmt.Sprintf("%s/api/foods/search?id=%s", h.getAPIBaseURL(), fmt.Sprintf("%v", ing["ID"]))
 								if resp, err := http.Get(u); err == nil {
 									var details []map[string]interface{}
 									if de := json.NewDecoder(resp.Body).Decode(&details); de == nil && len(details) > 0 {
@@ -983,7 +992,7 @@ func (h *FoodHandler) AddToCalendar(c *fiber.Ctx) error {
 				for _, rawIng := range ings {
 					if ing, ok := rawIng.(map[string]interface{}); ok {
 						ingID := fmt.Sprintf("%v", ing["ID"])
-						apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
+						apiUrl := fmt.Sprintf("%s/api/foods/search?id=%s", h.getAPIBaseURL(), ingID)
 						resp, err := http.Get(apiUrl)
 						if err == nil && resp.StatusCode == 200 {
 							var details []map[string]interface{}

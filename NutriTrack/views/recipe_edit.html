@@ -16,12 +16,18 @@
     <textarea id="description" name="description" form="recipe-form">{{.Recipe.Description}}</textarea>
 </header>
 
-<div class="recipe-container">
+ <div id="recipe-editor-area">
+ <div class="recipe-container">
     <!-- 左カラム: 材料操作と調理工程 -->
     <div>
             <article>
                 <header><strong>食品を探して追加</strong></header>
-                <form action="{{if .Recipe.ID}}/recipe/{{.Recipe.ID}}/edit{{else}}/recipe/new{{end}}" method="GET" style="margin-bottom: 1rem;">
+                <form hx-get="{{if .Recipe.ID}}/recipe/{{.Recipe.ID}}/edit{{else}}/recipe/new{{end}}" 
+                      hx-target="#recipe-editor-area" 
+                      hx-select="#recipe-editor-area" 
+                      hx-swap="outerHTML"
+                      hx-push-url="false"
+                      style="margin-bottom: 1rem;">
                     <div style="display: flex; gap: 10px;">
                         <input type="text" name="q" placeholder="食品名で検索..." value="{{.Query}}">
                         <button type="submit" class="outline">検索</button>
@@ -37,7 +43,11 @@
                                 <td>{{.name}}</td>
                                 <td style="text-align: right;">
                                     <button type="submit" form="add-search-{{.num_id}}" class="outline" style="padding: 2px 8px; font-size: 0.7rem;">追加</button>
-                                    <form id="add-search-{{.num_id}}" action="/ingredients/add" method="POST" style="display:none;">
+                                    <form id="add-search-{{.num_id}}" hx-post="/ingredients/add" 
+                                          hx-target="#recipe-editor-area" 
+                                          hx-select="#recipe-editor-area" 
+                                          hx-swap="outerHTML"
+                                          action="/ingredients/add" method="POST" style="display:none;">
                                         <input type="hidden" name="id" value="{{.num_id}}">
                                         <input type="hidden" name="name" value="{{.name}}">
                                     </form>
@@ -114,6 +124,33 @@
             <div style="max-width: 100%; margin: 0 auto;">
                 <canvas id="nutrientChart"></canvas>
             </div>
+            <script>
+                (function() {
+                    const ctx = document.getElementById('nutrientChart').getContext('2d');
+                    const summary = {
+                        energy: {{.Summary.Energy}}, prot: {{.Summary.Prot}}, fat: {{.Summary.Fat}}, cho: {{.Summary.Cho}},
+                        k: {{.Summary.K}}, ca: {{.Summary.Ca}}, fe: {{.Summary.Fe}}, zn: {{.Summary.Zn}},
+                        vitA: {{.Summary.VitA}}, vitB: {{.Summary.VitB}}, vitC: {{.Summary.VitC}}, fiber: {{.Summary.Fiber}}, salt: {{.Summary.Salt}}
+                    };
+                    new Chart(ctx, {
+                        type: 'radar',
+                        data: {
+                            labels: ['エネルギー', 'たんぱく質', '脂質', '炭水化物', 'カリウム', 'カルシウム', '鉄', '亜鉛', 'ビタミンA', 'ビタミンB', 'ビタミンC', '食物繊維', '食塩'],
+                            datasets: [{
+                                data: [
+                                    Math.min((summary.energy/700)*100, 120), Math.min((summary.prot/20)*100, 120), Math.min((summary.fat/20)*100, 120),
+                                    Math.min((summary.cho/100)*100, 120), Math.min((summary.k/800)*100, 120), Math.min((summary.ca/200)*100, 120),
+                                    Math.min((summary.fe/2.5)*100, 120), Math.min((summary.zn/3.0)*100, 120), Math.min((summary.vitA/250)*100, 120),
+                                    Math.min((summary.vitB/0.4)*100, 120), Math.min((summary.vitC/33)*100, 120), Math.min((summary.fiber/6.0)*100, 120),
+                                    Math.min((summary.salt/2.5)*100, 120)
+                                ],
+                                backgroundColor: 'rgba(54, 162, 235, 0.2)', borderColor: 'rgb(54, 162, 235)'
+                            }]
+                        },
+                        options: { scales: { r: { suggestedMax: 100, ticks: { display: false } } }, plugins: { legend: { display: false } } }
+                    });
+                })();
+            </script>
         </article>
     </aside>
 </div>
@@ -122,45 +159,27 @@
 
 <!-- 材料操作用の隠しフォーム -->
 {{range .Ingredients}}
-<form id="remove-form-{{.ID}}" action="/ingredients/remove" method="POST" style="display:none;">
+<form id="remove-form-{{.ID}}" hx-post="/ingredients/remove" 
+      hx-target="#recipe-editor-area" 
+      hx-select="#recipe-editor-area" 
+      hx-swap="outerHTML"
+      action="/ingredients/remove" method="POST" style="display:none;">
     <input type="hidden" name="id" value="{{.ID}}">
 </form>
 {{end}}
 {{range .MyIngredients}}
-<form id="add-form-{{.ID}}" action="/ingredients/add" method="POST" style="display:none;">
+<form id="add-form-{{.ID}}" hx-post="/ingredients/add" 
+      hx-target="#recipe-editor-area" 
+      hx-select="#recipe-editor-area" 
+      hx-swap="outerHTML"
+      action="/ingredients/add" method="POST" style="display:none;">
     <input type="hidden" name="id" value="{{.ID}}">
     <input type="hidden" name="name" value="{{.Name}}">
 </form>
 {{end}}
+</div>
 
 <script>
-    // チャート表示スクリプト (recipe_detailと同様)
-    (function() {
-        const ctx = document.getElementById('nutrientChart').getContext('2d');
-        const summary = {
-            energy: {{.Summary.Energy}}, prot: {{.Summary.Prot}}, fat: {{.Summary.Fat}}, cho: {{.Summary.Cho}},
-            k: {{.Summary.K}}, ca: {{.Summary.Ca}}, fe: {{.Summary.Fe}}, zn: {{.Summary.Zn}},
-            vitA: {{.Summary.VitA}}, vitB: {{.Summary.VitB}}, vitC: {{.Summary.VitC}}, fiber: {{.Summary.Fiber}}, salt: {{.Summary.Salt}}
-        };
-        new Chart(ctx, {
-            type: 'radar',
-            data: {
-                labels: ['エネルギー', 'たんぱく質', '脂質', '炭水化物', 'カリウム', 'カルシウム', '鉄', '亜鉛', 'ビタミンA', 'ビタミンB', 'ビタミンC', '食物繊維', '食塩'],
-                datasets: [{
-                    data: [
-                        Math.min((summary.energy/700)*100, 120), Math.min((summary.prot/20)*100, 120), Math.min((summary.fat/20)*100, 120),
-                        Math.min((summary.cho/100)*100, 120), Math.min((summary.k/800)*100, 120), Math.min((summary.ca/200)*100, 120),
-                        Math.min((summary.fe/2.5)*100, 120), Math.min((summary.zn/3.0)*100, 120), Math.min((summary.vitA/250)*100, 120),
-                        Math.min((summary.vitB/0.4)*100, 120), Math.min((summary.vitC/33)*100, 120), Math.min((summary.fiber/6.0)*100, 120),
-                        Math.min((summary.salt/2.5)*100, 120)
-                    ],
-                    backgroundColor: 'rgba(54, 162, 235, 0.2)', borderColor: 'rgb(54, 162, 235)'
-                }]
-            },
-            options: { scales: { r: { suggestedMax: 100, ticks: { display: false } } }, plugins: { legend: { display: false } } }
-        });
-    })();
-
     function addStep() {
         const container = document.getElementById('steps-container');
         const stepCount = container.getElementsByClassName('step-item').length + 1;

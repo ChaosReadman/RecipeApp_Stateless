@@ -13,12 +13,17 @@
     <textarea id="description" name="description" placeholder="レシピのポイントなど" form="recipe-form"></textarea>
 </header>
 
-<div class="grid">
+ <div class="grid" id="recipe-new-area">
     <!-- 左カラム: 食品検索と材料追加 -->
     <div>
-        <article>
+        <article id="search-section">
             <header><strong>食品を探して追加</strong></header>
-            <form action="/recipe/new" method="GET" style="margin-bottom: 1rem;">
+            <form hx-get="/recipe/new" 
+                  hx-target="#recipe-new-area" 
+                  hx-select="#recipe-new-area" 
+                  hx-swap="outerHTML"
+                  hx-push-url="false"
+                  style="margin-bottom: 1rem;">
                 <div style="display: flex; gap: 10px;">
                     <input type="text" name="q" placeholder="食品名で検索..." value="{{.Query}}">
                     <button type="submit" class="outline">検索</button>
@@ -33,7 +38,11 @@
                         <tr>
                             <td>{{.Name}}</td>
                             <td style="text-align: right;">
-                                <form action="/ingredients/add" method="POST" style="margin:0;">
+                                <form hx-post="/ingredients/add" 
+                                      hx-target="#recipe-new-area" 
+                                      hx-select="#recipe-new-area" 
+                                      hx-swap="outerHTML"
+                                      action="/ingredients/add" method="POST" style="margin:0;">
                                     <input type="hidden" name="id" value="{{.ID}}">
                                     <input type="hidden" name="name" value="{{.Name}}">
                                     <button type="submit" class="outline" style="padding: 2px 8px; font-size: 0.7rem;">追加</button>
@@ -55,7 +64,11 @@
                         <span style="flex-basis: 100%; font-weight: bold;">{{.Name}}</span>
                         <input type="number" name="qty_{{.ID}}" value="{{.Weight}}" placeholder="量 (g)" required style="flex-grow: 1; min-width: 80px; margin-bottom: 0;" form="recipe-form">
                         <input type="text" name="grp_{{.ID}}" value="{{.GroupName}}" placeholder="グループ名" style="flex-grow: 2; min-width: 120px; margin-bottom: 0;" form="recipe-form">
-                        <form action="/ingredients/remove/{{.ID}}" method="POST" style="margin:0;">
+                        <form hx-post="/ingredients/remove/{{.ID}}" 
+                              hx-target="#recipe-new-area" 
+                              hx-select="#recipe-new-area" 
+                              hx-swap="outerHTML"
+                              action="/ingredients/remove/{{.ID}}" method="POST" style="margin:0;">
                             <button type="submit" class="outline secondary" style="padding: 2px 8px; font-size: 0.7rem; border:none; margin-bottom: 0;">✕</button>
                         </form>
                     </div>

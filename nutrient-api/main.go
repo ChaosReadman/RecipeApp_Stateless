@@ -3,14 +3,21 @@ package main
 import (
 	"database/sql"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 func main() {
+	// .envファイルを読み込む（存在しなくてもエラーにはしない）
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using default settings")
+	}
+
 	app := fiber.New()
 
 	// CORSミドルウェアを追加 (フロントエンドからのアクセスを許可)
@@ -88,5 +95,12 @@ func main() {
 		return c.JSON(results)
 	})
 
-	log.Fatal(app.Listen(":8080")) // Webアプリ(3000)とは別のポートで待機
+	// ポート番号を環境変数から取得（デフォルトは8080）
+	port := os.Getenv("API_PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("Nutrient API starting on port %s", port)
+	log.Fatal(app.Listen(":" + port))
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/gofiber/template/html/v2"
+	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -56,6 +57,10 @@ func getIngredients(sess *session.Session) []FoodMap {
 }
 
 func main() {
+	// .envファイルを読み込む
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, relying on system environment variables")
+	}
 
 	// 2. セッションストアの初期化
 	store := session.New(session.Config{
@@ -73,10 +78,28 @@ func main() {
 		log.Fatal("環境変数 GOOGLE_CLIENT_ID と GOOGLE_CLIENT_SECRET を設定してください")
 	}
 
+	appHost := os.Getenv("APP_HOST")
+	if appHost == "" {
+		appHost = "127.0.0.1"
+	}
+	appPort := os.Getenv("APP_PORT")
+	if appPort == "" {
+		appPort = "3000"
+	}
+
+	apiHost := os.Getenv("API_HOST")
+	if apiHost == "" {
+		apiHost = "127.0.0.1"
+	}
+	apiPort := os.Getenv("API_PORT")
+	if apiPort == "" {
+		apiPort = "8080"
+	}
+
 	conf := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		RedirectURL:  "http://127.0.0.1:3000/auth/callback", // ここが Console の設定と完全一致している必要があります
+		RedirectURL:  fmt.Sprintf("http://%s:%s/auth/callback", appHost, appPort),
 		Scopes: []string{
 			"https://www.googleapis.com/auth/userinfo.email",
 			"https://www.googleapis.com/auth/userinfo.profile",
@@ -210,7 +233,7 @@ func main() {
 
 		if query != "" {
 			// nutrient-api へのリクエスト
-			apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?q=%s", query)
+			apiUrl := fmt.Sprintf("http://%s:%s/api/foods/search?q=%s", apiHost, apiPort, query)
 			resp, err := apiClient.Get(apiUrl)
 			if err == nil {
 				defer resp.Body.Close()
@@ -319,7 +342,7 @@ func main() {
 									if m, ok := ing.(map[string]interface{}); ok {
 										// 栄養素の再計算のためにAPIから最新データを取得
 										ingID := fmt.Sprintf("%v", m["ID"])
-										apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", ingID)
+										apiUrl := fmt.Sprintf("http://%s:%s/api/foods/search?id=%s", apiHost, apiPort, ingID)
 										resp, err := apiClient.Get(apiUrl)
 										if err == nil {
 											var details []FoodMap
@@ -433,7 +456,7 @@ func main() {
 			// 詳細な栄養素を取得するためにAPIを叩く
 			var details []FoodMap
 			// APIの仕様(id=)に合わせてリクエスト
-			apiUrl := fmt.Sprintf("http://127.0.0.1:8080/api/foods/search?id=%s", id)
+			apiUrl := fmt.Sprintf("http://%s:%s/api/foods/search?id=%s", apiHost, apiPort, id)
 			log.Printf("[API FETCH] URL: %s", apiUrl)
 			resp, err := apiClient.Get(apiUrl)
 			if err != nil {
@@ -559,8 +582,6 @@ func main() {
 	app.All("/calendar/add", foodHandler.AddToCalendar)
 	app.Post("/calendar/remove/:id", foodHandler.RemoveFromCalendar)
 
-	// 127.0.0.1:3000 で起動（APIの8080と分ける）
-	port := "3000"
-	fmt.Printf("Server started on http://127.0.0.1:%s\n", port)
-	log.Fatal(app.Listen(":" + port))
+	fmt.Printf("Server started on http://%s:%s\n", appHost, appPort)
+	log.Fatal(app.Listen(":" + appPort))
 }

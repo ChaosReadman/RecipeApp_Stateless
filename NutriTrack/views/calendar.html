@@ -12,10 +12,9 @@
     </form>
 </header>
 
-<div class="recipe-container">
-    <!-- 左カラム: 検索と登録 -->
-    <div>
-        <article>
+<!-- １段目：レシピを検索して追加 -->
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--pico-spacing); align-items: start; margin-bottom: var(--pico-spacing);">
+    <article style="margin: 0;">
             <header><strong>レシピを検索して追加</strong></header>
             <form action="/calendar" method="GET" style="display: flex; gap: 10px;">
                 <input type="hidden" name="date" value="{{.Date}}">
@@ -46,9 +45,16 @@
                 </table>
             </div>
             {{end}}
-        </article>
+    </article>
+    <article style="margin: 0; padding: 10px;">
+        <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>1. レシピ単体 (1食目安)</strong></header>
+        <canvas id="chartRecipe" height="200"></canvas>
+    </article>
+</div>
 
-        <article>
+<!-- ２段目：メニューを登録 -->
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--pico-spacing); align-items: start; margin-bottom: var(--pico-spacing);">
+    <article style="margin: 0;">
             <header><strong>メニューを登録する</strong></header>
             <!-- 選択されたレシピの表示エリア -->
             {{if .SelectedRecipes}}
@@ -84,9 +90,16 @@
                 </div>
                 <button type="submit" style="width: 100%;" {{if not .SelectedRecipes}}disabled{{end}}>カレンダーに記録</button>
             </form>
-        </article>
+    </article>
+    <article style="margin: 0; padding: 10px;">
+        <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>2. 今回の１食分合計</strong></header>
+        <canvas id="chartMeal" height="200"></canvas>
+    </article>
+</div>
 
-        <article>
+<!-- ３段目：食事履歴 -->
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: var(--pico-spacing); align-items: start; margin-bottom: var(--pico-spacing);">
+    <article style="margin: 0;">
             <header><strong>{{.Date}} の食事履歴</strong></header>
             {{range .Entries}}
             <div class="history-item" data-summary='{{.Summary | json}}' style="padding: 0.5rem; border-bottom: 1px solid var(--pico-muted-border-color); display: flex; justify-content: space-between; align-items: center;">
@@ -105,24 +118,11 @@
             {{else}}
             <p><small>この日の記録はありません</small></p>
             {{end}}
-        </article>
-    </div>
-
-    <!-- 右カラム: 栄養バランス -->
-    <aside>
-        <article style="padding: 10px; margin-bottom: 1rem;">
-            <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>1. レシピ単体 (1食目安)</strong></header>
-            <canvas id="chartRecipe" height="200"></canvas>
-        </article>
-        <article style="padding: 10px; margin-bottom: 1rem;">
-            <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>2. 今回の１食分合計</strong></header>
-            <canvas id="chartMeal" height="200"></canvas>
-        </article>
-        <article style="padding: 10px;">
-            <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>3. 今日の１日分合計</strong></header>
-            <canvas id="chartDay" height="200"></canvas>
-        </article>
-    </aside>
+    </article>
+    <article style="margin: 0; padding: 10px;">
+        <header style="margin-bottom: 5px; font-size: 0.8rem;"><strong>3. 今日の１日分合計</strong></header>
+        <canvas id="chartDay" height="200"></canvas>
+    </article>
 </div>
 
 <script>

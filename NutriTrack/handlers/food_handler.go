@@ -80,13 +80,11 @@ func (h *FoodHandler) Index(c *fiber.Ctx) error {
 		json.Unmarshal([]byte(rawToken.(string)), &token)
 		client := h.OAuthConfig.Client(context.Background(), &token)
 
-		spreadsheetId, err := services.GetOrCreateRecipeSpreadsheet(c.Context(), client)
+		data, err := services.FetchRecipes(c.Context(), client, recipeQuery)
 		if err == nil {
-			data, err := services.FetchRecipes(c.Context(), client, spreadsheetId, recipeQuery)
-			if err == nil {
-				recipes = data
-			}
+			recipes = data
 		}
+
 	}
 
 	// 食品検索（Nutrient APIを使用）
@@ -345,6 +343,7 @@ func (h *FoodHandler) CreateRecipe(c *fiber.Ctx) error {
 	}
 
 	title := c.FormValue("title")
+	group := c.FormValue("group")
 	description := c.FormValue("description")
 
 	// 調理手順の取得
@@ -387,54 +386,20 @@ func (h *FoodHandler) CreateRecipe(c *fiber.Ctx) error {
 	json.Unmarshal([]byte(rawToken.(string)), &token)
 	client := h.OAuthConfig.Client(context.Background(), &token)
 
-	// ユーザー固有のスプレッドシートを検索または作成
-	spreadsheetId, err := services.GetOrCreateRecipeSpreadsheet(c.Context(), client)
-	if err != nil {
-		log.Printf("GetOrCreateRecipeSpreadsheet Error: %v", err)
-		return c.Status(500).SendString(fmt.Sprintf("レシピ用スプレッドシートの準備に失敗しました: %v", err))
-	}
-
 	// タイムスタンプをコンテキストに含めて渡す
 	ctx := context.WithValue(context.Background(), "timestamp", time.Now().Format("2006-01-02 15:04:05"))
 
 	// シートごとに1レシピを保存 (シート名 = レシピ名称)
-	err = services.CreateRecipeSheet(ctx, client, spreadsheetId, title, description, ingredientList, steps)
+	err := services.CreateRecipeJSON(ctx, client, title, group, description, ingredientList, steps)
 	if err != nil {
-		log.Printf("CreateRecipeSheet Error: %v", err)
-		return c.Status(500).SendString("スプレッドシートへの保存に失敗しました: " + err.Error())
+		log.Printf("CreateRecipeJSON Error: %v", err)
+		return c.Status(500).SendString("JSONへの保存に失敗しました: " + err.Error())
 	}
 
 	// セッションの材料リストをクリア
 	sess.Delete("ingredients")
 	sess.Save()
 	return c.Redirect("/")
-}
-
-// RecipeDetail はレシピの詳細画面を表示します
-func (h *FoodHandler) RecipeDetail(c *fiber.Ctx) error {
-	id := c.Params("id")
-	log.Printf("DEBUG: RecipeDetail called with ID: %s", id)
-	sess, _ := h.Store.Get(c)
-	user := sess.Get("username")
-	userID, _ := sess.Get("user_id").(string)
-	ingredients := h.getIngredientsFromSession(c)
-
-	// TODO: スプレッドシートからレシピを取得
-	recipe := &models.RecipeFull{Title: "Coming Soon (Sheets Sync)"}
-
-	isOwner := false
-	if userID != "" && userID == recipe.UserID {
-		isOwner = true
-	}
-
-	return c.Render("recipe_detail", fiber.Map{
-		"Title":                recipe.Title,
-		"User":                 user,
-		"Recipe":               recipe,
-		"Ingredients":          ingredients,
-		"IsOwner":              isOwner,
-		"HideIngredientDrawer": true,
-	}, "layout")
 }
 
 // EditRecipe はレシピの編集画面を表示します
@@ -451,7 +416,7 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 		json.Unmarshal([]byte(rawToken.(string)), &token)
 		client := h.OAuthConfig.Client(c.Context(), &token)
 		// JSONファイルから全レシピを取得してIDで検索
-		recipes, err := services.FetchRecipes(c.Context(), client, "", "")
+		recipes, err := services.FetchRecipes(c.Context(), client, "")
 		if err == nil {
 			for _, r := range recipes {
 				if fmt.Sprintf("%v", r["ID"]) == id {
@@ -597,6 +562,29 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 	}, "layout")
 }
 
+func (h *FoodHandler) DeleteRecipe(c *fiber.Ctx) error {
+	id := c.Params("id")
+	group := c.Params("group")
+	sess, _ := h.Store.Get(c)
+	rawToken := sess.Get("oauth_token")
+
+	if rawToken == nil {
+		return c.Status(401).SendString("認証が必要です")
+	}
+
+	var token oauth2.Token
+	json.Unmarshal([]byte(rawToken.(string)), &token)
+	client := h.OAuthConfig.Client(context.Background(), &token)
+
+	err := services.DeleteRecipe(c.Context(), client, id, group)
+	if err != nil {
+		log.Printf("DeleteRecipe Error: %v", err)
+		return c.Status(500).SendString("レシピの削除に失敗しました: " + err.Error())
+	}
+
+	return c.Redirect("/")
+}
+
 // UpdateRecipe はレシピを更新します
 func (h *FoodHandler) UpdateRecipe(c *fiber.Ctx) error {
 	id := c.Params("id")
@@ -608,6 +596,7 @@ func (h *FoodHandler) UpdateRecipe(c *fiber.Ctx) error {
 	}
 
 	title := c.FormValue("title")
+	group := c.FormValue("group")
 	description := c.FormValue("description")
 
 	// 調理手順の取得
@@ -648,7 +637,7 @@ func (h *FoodHandler) UpdateRecipe(c *fiber.Ctx) error {
 	json.Unmarshal([]byte(rawToken.(string)), &token)
 	client := h.OAuthConfig.Client(context.Background(), &token)
 
-	err := services.UpdateRecipe(c.Context(), client, id, title, description, ingredientList, steps)
+	err := services.UpdateRecipe(c.Context(), client, id, group, title, description, ingredientList, steps)
 	if err != nil {
 		log.Printf("UpdateRecipe Error: %v", err)
 		return c.Status(500).SendString("レシピの更新に失敗しました: " + err.Error())
@@ -737,7 +726,6 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 	steps := 0
 	burned := 0
 	healthSynced := false
-	var spreadsheetId string
 
 	if rawToken := sess.Get("oauth_token"); rawToken != nil {
 		var token oauth2.Token
@@ -760,8 +748,7 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 		}
 
 		// 2. レシピ検索処理
-		spreadsheetId, _ = services.GetOrCreateRecipeSpreadsheet(c.Context(), client)
-		data, err := services.FetchRecipes(c.Context(), client, spreadsheetId, recipeQuery)
+		data, err := services.FetchRecipes(c.Context(), client, recipeQuery)
 		if err == nil {
 			// 各検索結果レシピの栄養素を計算 (チャート1用)
 			for _, r := range data {
@@ -797,7 +784,7 @@ func (h *FoodHandler) CalendarIndex(c *fiber.Ctx) error {
 		if len(selectedRecipesRaw) > 0 {
 			// 全レシピを取得してマップ化
 			recipeMap := make(map[string]map[string]interface{})
-			allRecipes, _ := services.FetchRecipes(c.Context(), client, spreadsheetId, "")
+			allRecipes, _ := services.FetchRecipes(c.Context(), client, "")
 			for _, r := range allRecipes {
 				recipeMap[fmt.Sprintf("%v", r["ID"])] = r
 			}
@@ -953,7 +940,7 @@ func (h *FoodHandler) AddToCalendar(c *fiber.Ctx) error {
 
 	// 2. 登録する全レシピの合計栄養素を計算
 	summary := NutrientSummary{}
-	allRecipes, err := services.FetchRecipes(c.Context(), client, "", "")
+	allRecipes, err := services.FetchRecipes(c.Context(), client, "")
 	if err != nil {
 		return c.Status(500).SendString("レシピの取得に失敗しました")
 	}

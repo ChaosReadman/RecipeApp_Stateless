@@ -129,8 +129,9 @@ func main() {
 	engine.Reload(true) // 開発用
 
 	app := fiber.New(fiber.Config{
-		Views:     engine,
-		Immutable: true,
+		Views:        engine,
+		Immutable:    true,
+		UnescapePath: true,
 	})
 	app.Static("/", "./public")
 
@@ -152,7 +153,7 @@ func main() {
 			if err := json.Unmarshal([]byte(rawToken.(string)), &token); err == nil {
 				// conf は main.go 内で定義されている oauth2.Config
 				client := conf.Client(c.Context(), &token)
-				data, err := services.FetchRecipes(c.Context(), client, "", recipeQuery)
+				data, err := services.FetchRecipes(c.Context(), client, "")
 				if err == nil {
 					recipes = data
 				}
@@ -274,6 +275,7 @@ func main() {
 	app.Get("/recipe/new", foodHandler.NewRecipe)
 	app.Post("/recipe/create", foodHandler.CreateRecipe)
 	app.Get("/recipe/:id/edit", foodHandler.EditRecipe)
+	app.Post("/recipe/:id/:group/delete", foodHandler.DeleteRecipe)
 	app.Post("/recipe/:id/update", foodHandler.UpdateRecipe)
 
 	// レシピ詳細（調理画面）
@@ -288,7 +290,7 @@ func main() {
 			if err := json.Unmarshal([]byte(rawToken.(string)), &token); err == nil {
 				// 認証クライアントの作成
 				client := conf.Client(c.Context(), &token)
-				recipes, err := services.FetchRecipes(c.Context(), client, "", "")
+				recipes, err := services.FetchRecipes(c.Context(), client, "")
 				if err == nil {
 					for _, r := range recipes {
 						if fmt.Sprintf("%v", r["ID"]) == id {

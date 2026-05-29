@@ -65,7 +65,7 @@
             <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem;">
                 {{range .Recipes}}
                 <article>
-                    <header><strong>{{.Title}}</strong></header>
+                    <header><strong>{{.Group}}:{{.Title}}</strong></header>
                     <p style="font-size: 0.8rem; min-height: 3em;">{{.Description}}</p>
                     <footer>
                         <a href="/recipe/{{.ID}}" class="outline" style="font-size: 0.8rem;">詳しく見る</a>

@@ -7,7 +7,10 @@
 
 <header>
     <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h1>{{.Recipe.Title}}</h1>
+        <h1>{{.Recipe.Group}}:{{.Recipe.Title}}</h1>
+        <form action="/recipe/{{.Recipe.ID}}/{{.Recipe.Group}}/delete" method="POST" style="margin: 0;" onsubmit="return confirm('本当にこのレシピを削除しますか？')">
+            <button type="submit" class="outline" style="font-size: 0.8rem; padding: 0.5rem 1rem;">レシピを削除する</button>
+        </form>
         <a href="/recipe/{{.Recipe.ID}}/edit" role="button" class="secondary outline" style="font-size: 0.8rem; padding: 0.5rem 1rem;">このレシピを編集する</a>
     </div>
     <p>{{.Recipe.Description}}</p>

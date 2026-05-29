@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,37 +17,53 @@ import (
 )
 
 const (
-	RecipesFile     = "recipes.json"
 	MealHistoryFile = "Calendar.json"
 )
 
 var mu sync.Mutex
 
-// GetOrCreateRecipeSpreadsheet は互換性のために残されています。
-// 現在はスプレッドシートではなく Google Drive 上の JSON を使用しているため、ダミーの ID を返します。
-func GetOrCreateRecipeSpreadsheet(ctx context.Context, client *http.Client) (string, error) {
-	return "google_drive_json_mode", nil
-}
+// getOrCreateFolder は Google Drive 上に指定されたパスのフォルダ階層を探し、なければ作成して最下層のフォルダの ID を返します
+// 例: "NutriTrack\\Recipes\\MyGroup" のようなパスを受け取り、各階層のフォルダを作成/取得し、最終的に "MyGroup" フォルダのIDを返します。
+func getOrCreateFolder(srv *drive.Service, folderPath string) (string, error) {
+	// パスセパレータを正規化 (Windowsの\とUnix系の/の両方に対応)
+	folderPath = strings.ReplaceAll(folderPath, "\\", "/")
+	parts := strings.Split(folderPath, "/")
+	if len(parts) == 0 {
+		return "", errors.New("empty folder path provided")
+	}
 
-// getOrCreateFolder は Google Drive 上に指定された名前のフォルダを探し、なければ作成して ID を返します
-func getOrCreateFolder(srv *drive.Service, folderName string) (string, error) {
-	query := fmt.Sprintf("name='%s' and mimeType='application/vnd.google-apps.folder' and trashed=false", folderName)
-	list, err := srv.Files.List().Q(query).Do()
-	if err != nil {
-		return "", err
+	currentParentID := "root" // Google Driveのルートから開始
+
+	for _, part := range parts {
+		if part == "" {
+			continue // 空のパスセグメントはスキップ (例: "//" や末尾の "/")
+		}
+
+		// 現在の親フォルダ内で、指定された名前のフォルダを検索
+		query := fmt.Sprintf("name='%s' and mimeType='application/vnd.google-apps.folder' and '%s' in parents and trashed=false", part, currentParentID)
+		list, err := srv.Files.List().Q(query).Do()
+		if err != nil {
+			return "", fmt.Errorf("failed to list files for folder '%s' in parent '%s': %w", part, currentParentID, err)
+		}
+
+		if len(list.Files) > 0 {
+			// フォルダが見つかった場合、そのIDを次の親IDとする
+			currentParentID = list.Files[0].Id
+		} else {
+			// フォルダが見つからなかった場合、作成する
+			folder := &drive.File{
+				Name:     part,
+				MimeType: "application/vnd.google-apps.folder",
+				Parents:  []string{currentParentID}, // 現在の親IDを指定
+			}
+			res, err := srv.Files.Create(folder).Do()
+			if err != nil {
+				return "", fmt.Errorf("failed to create folder '%s' in parent '%s': %w", part, currentParentID, err)
+			}
+			currentParentID = res.Id
+		}
 	}
-	if len(list.Files) > 0 {
-		return list.Files[0].Id, nil
-	}
-	folder := &drive.File{
-		Name:     folderName,
-		MimeType: "application/vnd.google-apps.folder",
-	}
-	res, err := srv.Files.Create(folder).Do()
-	if err != nil {
-		return "", err
-	}
-	return res.Id, nil
+	return currentParentID, nil
 }
 
 // getOrCreateFile は指定されたフォルダ内のファイルを探し、なければ空の JSON 配列で作成します
@@ -96,7 +113,7 @@ func uploadJSON(srv *drive.Service, fileID string, data interface{}) error {
 }
 
 // CreateRecipeSheet はレシピ情報を recipes.json に保存します
-func CreateRecipeSheet(ctx context.Context, client *http.Client, spreadsheetId, title, description string, ingredients []map[string]interface{}, steps []string) error {
+func CreateRecipeJSON(ctx context.Context, client *http.Client, title, group, description string, ingredients []map[string]interface{}, steps []string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -105,12 +122,12 @@ func CreateRecipeSheet(ctx context.Context, client *http.Client, spreadsheetId, 
 		return err
 	}
 
-	folderID, err := getOrCreateFolder(srv, "NutriTrack")
+	// レシピファイルを保存する親フォルダ (NutriTrack/Recipes) を取得
+	recipesFolderID, err := getOrCreateFolder(srv, "NutriTrack\\Recipes")
 	if err != nil {
 		return err
 	}
-
-	fileID, err := getOrCreateFile(srv, folderID, RecipesFile)
+	fileID, err := getOrCreateFile(srv, recipesFolderID, group+".json")
 	if err != nil {
 		return err
 	}
@@ -140,8 +157,7 @@ func CreateRecipeSheet(ctx context.Context, client *http.Client, spreadsheetId, 
 	return uploadJSON(srv, fileID, recipes)
 }
 
-// UpdateRecipe は既存のレシピを更新します
-func UpdateRecipe(ctx context.Context, client *http.Client, id, title, description string, ingredients []map[string]interface{}, steps []string) error {
+func DeleteRecipe(ctx context.Context, client *http.Client, id, group string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -150,18 +166,63 @@ func UpdateRecipe(ctx context.Context, client *http.Client, id, title, descripti
 		return err
 	}
 
-	folderID, err := getOrCreateFolder(srv, "NutriTrack")
+	// レシピファイルを保存する親フォルダ (NutriTrack/Recipes) を取得
+	recipesFolderID, err := getOrCreateFolder(srv, "NutriTrack\\Recipes")
 	if err != nil {
 		return err
 	}
-
-	fileID, err := getOrCreateFile(srv, folderID, RecipesFile)
+	fileID, err := getOrCreateFile(srv, recipesFolderID, group+".json")
 	if err != nil {
 		return err
 	}
 
 	var recipes []map[string]interface{}
-	downloadJSON(srv, fileID, &recipes)
+	if err := downloadJSON(srv, fileID, &recipes); err != nil {
+		return fmt.Errorf("failed to download recipes: %w", err)
+	}
+
+	// 指定されたID以外のレシピだけを残す（フィルタリング）
+	newRecipes := []map[string]interface{}{}
+	targetID := strings.TrimSpace(id)
+	for _, r := range recipes {
+		currentID := strings.TrimSpace(fmt.Sprintf("%v", r["ID"]))
+		if currentID == targetID {
+			continue // 削除対象
+		}
+		newRecipes = append(newRecipes, r)
+	}
+
+	if len(recipes) == len(newRecipes) {
+		return errors.New("recipe not found")
+	}
+
+	return uploadJSON(srv, fileID, newRecipes)
+}
+
+// UpdateRecipe は既存のレシピを更新します
+func UpdateRecipe(ctx context.Context, client *http.Client, id, group, title, description string, ingredients []map[string]interface{}, steps []string) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		return err
+	}
+
+	// レシピファイルを保存する親フォルダ (NutriTrack/Recipes) を取得
+	recipesFolderID, err := getOrCreateFolder(srv, "NutriTrack\\Recipes")
+	if err != nil {
+		return err
+	}
+	fileID, err := getOrCreateFile(srv, recipesFolderID, group+".json")
+	if err != nil {
+		return err
+	}
+
+	var recipes []map[string]interface{}
+	if err := downloadJSON(srv, fileID, &recipes); err != nil {
+		return fmt.Errorf("failed to download recipes: %w", err)
+	}
 
 	// 工程（Steps）の変換
 	formattedSteps := make([]map[string]interface{}, len(steps))
@@ -173,8 +234,10 @@ func UpdateRecipe(ctx context.Context, client *http.Client, id, title, descripti
 	}
 
 	found := false
+	targetID := strings.TrimSpace(id)
 	for i, r := range recipes {
-		if fmt.Sprintf("%v", r["ID"]) == id {
+		currentID := strings.TrimSpace(fmt.Sprintf("%v", r["ID"]))
+		if currentID == targetID {
 			recipes[i]["Title"] = title
 			recipes[i]["Description"] = description
 			recipes[i]["Ingredients"] = ingredients
@@ -192,8 +255,8 @@ func UpdateRecipe(ctx context.Context, client *http.Client, id, title, descripti
 	return uploadJSON(srv, fileID, recipes)
 }
 
-// FetchRecipes は recipes.json からレシピ一覧を取得します
-func FetchRecipes(ctx context.Context, client *http.Client, spreadsheetId, query string) ([]map[string]interface{}, error) {
+// FetchRecipes は recipesフォルダの json  からレシピ一覧を取得します
+func FetchRecipes(ctx context.Context, client *http.Client, query string) ([]map[string]interface{}, error) {
 	if client == nil {
 		return nil, errors.New("client is nil")
 	}
@@ -205,33 +268,56 @@ func FetchRecipes(ctx context.Context, client *http.Client, spreadsheetId, query
 		return nil, err
 	}
 
-	folderID, err := getOrCreateFolder(srv, "NutriTrack")
+	// "NutriTrack/Recipes" フォルダのIDを取得
+	recipesFolderID, err := getOrCreateFolder(srv, "NutriTrack\\Recipes")
 	if err != nil {
 		return nil, err
 	}
 
-	fileID, err := getOrCreateFile(srv, folderID, RecipesFile)
+	fileList, err := listFiles(srv, recipesFolderID)
 	if err != nil {
 		return nil, err
 	}
 
-	var recipes []map[string]interface{}
-	if err := downloadJSON(srv, fileID, &recipes); err != nil {
-		return nil, err
+	var allRecipes []map[string]interface{}
+	// recipesFolderID内のすべての.jsonファイルを反復処理
+	for _, file := range fileList.Files {
+		if !strings.HasSuffix(file.Name, ".json") {
+			continue // .jsonファイル以外はスキップ
+		}
+		var groupRecipes []map[string]interface{}
+		if err := downloadJSON(srv, file.Id, &groupRecipes); err != nil {
+			// エラーをログに記録し、他のファイルで続行
+			log.Printf("Warning: Failed to download/parse recipe file %s (%s): %v\n", file.Name, file.Id, err)
+			continue
+		}
+
+		// ファイル名から .json を除いたものをグループ名とする
+		groupName := strings.TrimSuffix(file.Name, ".json")
+		// 取得したレシピすべてにグループ名を付与
+		for i := range groupRecipes {
+			groupRecipes[i]["Group"] = groupName
+		}
+		allRecipes = append(allRecipes, groupRecipes...)
 	}
 
 	if query == "" {
-		return recipes, nil
+		return allRecipes, nil
 	}
 
 	var filtered []map[string]interface{}
-	for _, r := range recipes {
+	for _, r := range allRecipes {
 		title, _ := r["Title"].(string)
 		if strings.Contains(strings.ToLower(title), strings.ToLower(query)) {
 			filtered = append(filtered, r)
 		}
 	}
 	return filtered, nil
+}
+
+func listFiles(srv *drive.Service, folderID string) (*drive.FileList, error) {
+	// listFilesの戻り値の型をdrive.FileListに明示
+	return drive.NewFilesService(srv).List().Q(fmt.Sprintf("'%s' in parents and trashed=false", folderID)).Do()
 }
 
 // FetchMealHistory は Calendar.json から全履歴を取得します

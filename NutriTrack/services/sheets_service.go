@@ -293,10 +293,10 @@ func FetchRecipes(ctx context.Context, client *http.Client, query string) ([]map
 		}
 
 		// ファイル名から .json を除いたものをグループ名とする
-		groupName := strings.TrimSuffix(file.Name, ".json")
+		Group := strings.TrimSuffix(file.Name, ".json")
 		// 取得したレシピすべてにグループ名を付与
 		for i := range groupRecipes {
-			groupRecipes[i]["Group"] = groupName
+			groupRecipes[i]["Group"] = Group
 		}
 		allRecipes = append(allRecipes, groupRecipes...)
 	}

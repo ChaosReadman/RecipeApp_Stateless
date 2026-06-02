@@ -12,7 +12,12 @@
     <label for="title">レシピ名</label>
     <input type="text" id="title" name="title" value="{{.Recipe.Title}}" required form="recipe-form">
     <label for="group">レシピのグループ名称</label>
-    <input type="text" id="group" name="group" value="{{.Recipe.Group}}" form="recipe-form">
+    <input list="group-list" id="group" name="group" value="{{.Recipe.Group}}" form="recipe-form">
+    <datalist id="group-list">
+        {{range .Groups}}
+        <option value="{{.}}">
+        {{end}}
+    </datalist>
     <label for="description">説明</label>
     <textarea id="description" name="description" form="recipe-form">{{.Recipe.Description}}</textarea>
 </header>

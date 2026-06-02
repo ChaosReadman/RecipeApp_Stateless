@@ -427,3 +427,32 @@ func RemoveMealHistory(ctx context.Context, client *http.Client, timestamp strin
 
 	return uploadJSON(srv, fileID, newHistory)
 }
+
+// ListRecipeGroups は NutriTrack/Recipes フォルダ内の JSON ファイル名（拡張子なし）を一覧で取得します
+func ListRecipeGroups(ctx context.Context, client *http.Client) ([]string, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+	if err != nil {
+		return nil, err
+	}
+
+	folderID, err := getOrCreateFolder(srv, "NutriTrack\\Recipes")
+	if err != nil {
+		return nil, err
+	}
+
+	fileList, err := listFiles(srv, folderID)
+	if err != nil {
+		return nil, err
+	}
+
+	var groups []string
+	for _, file := range fileList.Files {
+		if strings.HasSuffix(file.Name, ".json") {
+			groups = append(groups, strings.TrimSuffix(file.Name, ".json"))
+		}
+	}
+	return groups, nil
+}

@@ -253,6 +253,7 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 	query := c.Query("q")
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
+	rawToken := sess.Get("oauth_token")
 
 	ingredients := h.getIngredientsFromSession(c)
 
@@ -318,10 +319,20 @@ func (h *FoodHandler) NewRecipe(c *fiber.Ctx) error {
 		}
 	}
 
+	var groups []string
+	if rawToken != nil {
+		var token oauth2.Token
+		if err := json.Unmarshal([]byte(rawToken.(string)), &token); err == nil {
+			client := h.OAuthConfig.Client(c.Context(), &token)
+			groups, _ = services.ListRecipeGroups(c.Context(), client)
+		}
+	}
+
 	return c.Render("recipe_edit", fiber.Map{
 		"Title":         "レシピ作成",
 		"User":          user,
 		"Recipe":        map[string]interface{}{}, // 空のレシピ
+		"Groups":        groups,
 		"Foods":         foods,
 		"Query":         query,
 		"Summary":       summary,
@@ -409,11 +420,14 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 	query := c.Query("q")
 	sess, _ := h.Store.Get(c)
 	user := sess.Get("username")
+	rawToken := sess.Get("oauth_token")
 
 	var recipe map[string]interface{}
-	if rawToken := sess.Get("oauth_token"); rawToken != nil {
-		var token oauth2.Token
-		json.Unmarshal([]byte(rawToken.(string)), &token)
+	var token oauth2.Token
+	hasToken := false
+
+	if rawToken != nil && json.Unmarshal([]byte(rawToken.(string)), &token) == nil {
+		hasToken = true
 		client := h.OAuthConfig.Client(c.Context(), &token)
 		// JSONファイルから全レシピを取得してIDで検索
 		recipes, err := services.FetchRecipes(c.Context(), client, "")
@@ -549,10 +563,17 @@ func (h *FoodHandler) EditRecipe(c *fiber.Ctx) error {
 	sess.Set("ingredients", string(data))
 	_ = sess.Save()
 
+	var groups []string
+	if hasToken {
+		client := h.OAuthConfig.Client(c.Context(), &token)
+		groups, _ = services.ListRecipeGroups(c.Context(), client)
+	}
+
 	return c.Render("recipe_edit", fiber.Map{
 		"Title":         "レシピ編集",
 		"User":          user,
 		"Recipe":        recipe,
+		"Groups":        groups,
 		"Foods":         foods,
 		"Query":         query,
 		"Summary":       summary,
